@@ -302,7 +302,8 @@ function assertCompareAtPriceAbovePrice(product: Product): void {
   }
 }
 
-function isUniqueViolation(error: unknown): boolean {
+// Also used by FeaturedCardsService (same module).
+export function isUniqueViolation(error: unknown): boolean {
   return (
     error instanceof QueryFailedError &&
     (error.driverError as { code?: string }).code === PG_UNIQUE_VIOLATION

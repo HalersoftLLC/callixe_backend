@@ -580,8 +580,9 @@ text, no image), `ShopHeroService` in the Products module (same image rules as p
 (admin). Details in CLAUDE.md sections 4 and 7.
 
 **Admin app (done):** sidebar "Shop hero" → `/content/shop-hero`.
-- Text card (small line, heading, image description) with counters, **Discard changes** and
-  **Save text**. Drafts are kept separately from the saved values.
+- Text card (small line, heading) with counters, **Discard changes** and **Save text**. Drafts
+  are kept separately from the saved values. No image description field: `imageAlt` stays
+  null, so the store uses the heading as the image's alt text (the backend still accepts it).
 - Image card: picking a file uploads immediately (type and 5 MB checked first); **Remove image**
   asks to confirm. An upload never touches unsaved text.
 - Approximate preview of the store hero, updated while typing.
@@ -592,6 +593,28 @@ text, no image), `ShopHeroService` in the Products module (same image rules as p
 `contentService.js` (normal 10 s timeout). No uploaded image → the bundled image; request
 fails → the `dummyData.js` text and image. Nothing is shown while loading (no flash of old
 content). Changes appear on the next page load.
+
+### Phase 6: Featured product cards (Shop page, always 2)
+
+**Backend (done):** `featured_cards` table with two rows (slot 1/2; migration `…010`, seeded
+with Neck Pillow 2.0 left + "BOGO 50% OFF" and Neck & Back Bundle right). A card stores only
+the product, image side and promo; the product's own fields stay on the product.
+`FeaturedCardsService` in the Products module. `GET /featured-cards` (public, active products
+only), `GET /admin/featured-cards`, `PATCH /admin/featured-cards/:slot` (404 unknown product,
+400 inactive, 409 already in the other card; both rows locked while saving).
+
+**Admin app (done):** sidebar "Featured products" → `/content/featured-products`, one screen with
+both cards and an approximate preview. Price checks shared with the product form
+(`utils/productValidation.js`). "Save card N" =
+`PATCH /admin/products/:slug` (name, description, badge, prices) **then**
+`PATCH /admin/featured-cards/:slot`. Image: replace the product's main image file (or upload one
+if it has none) with the existing image routes; saves immediately.
+
+**Storefront (done):** the Shop screen loads `/featured-cards` once (`useFeaturedCards`) and splits
+the catalog once (`utils/featuredProducts.js`), so a product is either a big card or in the grid,
+never both. Falls back to `dummyData.js` `featured`/`promo`/`imagePosition` if the request fails;
+with the whole backend down the cards still show (built-in content, no prices). The product
+page shows the promo of the card holding that product.
 
 ### Final step: CLAUDE.md updates
 - Section 1: remove "admin panel" and "login/auth" from out of scope; note "admin only, single user".
