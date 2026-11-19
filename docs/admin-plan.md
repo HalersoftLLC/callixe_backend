@@ -612,8 +612,9 @@ if it has none) with the existing image routes; saves immediately.
 
 **Storefront (done):** the Shop screen loads `/featured-cards` once (`useFeaturedCards`) and splits
 the catalog once (`utils/featuredProducts.js`), so a product is either a big card or in the grid,
-never both. Falls back to `dummyData.js` `featured`/`promo`/`imagePosition` if the request fails;
-with the whole backend down the cards still show (built-in content, no prices). The product
+never both. Falls back to `dummyData.js` `featured`/`promo`/`imagePosition` if the request fails.
+With the whole backend down, the featured cards **and** the product grid show the built-in
+`dummyData.js` text and asset images (like the Shop hero), with no error message and no prices. The product
 page shows the promo of the card holding that product.
 
 ### Final step: CLAUDE.md updates

@@ -42,9 +42,11 @@ export interface AdminFeaturedCardView {
   updatedAt: Date;
 }
 
-// undefined = keep; productSlug null = empty the card; promo null = no promo.
+// undefined = keep; promo null = no promo. A card can't be emptied: the Shop
+// page always shows both cards (product_id is only null if a product was
+// removed from the database, until the admin picks another one).
 export interface FeaturedCardChanges {
-  productSlug?: string | null;
+  productSlug?: string;
   imagePosition?: FeaturedImagePosition;
   promo?: string | null;
 }
@@ -106,9 +108,7 @@ export class FeaturedCardsService {
           Pick<FeaturedCard, 'productId' | 'imagePosition' | 'promo'>
         > = {};
 
-        if (changes.productSlug === null) {
-          columns.productId = null;
-        } else if (changes.productSlug !== undefined) {
+        if (changes.productSlug !== undefined) {
           const product = await manager.findOneBy(Product, {
             slug: changes.productSlug,
           });

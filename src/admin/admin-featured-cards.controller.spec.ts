@@ -100,12 +100,6 @@ describe('featured card DTOs', () => {
     expect(errorsFor(UpdateFeaturedCardDto, {}).errors).toHaveLength(0);
   });
 
-  it('accepts productSlug null (hide the card)', () => {
-    expect(
-      errorsFor(UpdateFeaturedCardDto, { productSlug: null }).errors,
-    ).toHaveLength(0);
-  });
-
   it('turns a blank promo into null', () => {
     const { dto, errors } = errorsFor(UpdateFeaturedCardDto, { promo: '   ' });
     expect(errors).toHaveLength(0);
@@ -113,6 +107,7 @@ describe('featured card DTOs', () => {
   });
 
   it.each([
+    ['productSlug null (both cards always show)', { productSlug: null }],
     ['a bad slug', { productSlug: 'Neck Pillow' }],
     ['a non-string slug', { productSlug: 5 }],
     ['an unknown image side', { imagePosition: 'top' }],

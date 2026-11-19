@@ -14,7 +14,9 @@ import { Product } from './product.entity';
 // 2), created by the CreateFeaturedCards migration. A card only chooses a
 // product and how to show it; name, prices, description, badge and image come
 // from that product, so a card can never disagree with the product or with
-// checkout. product_id null = the card is hidden.
+// checkout. Both cards always show: the API never sets product_id to null.
+// It is only null if the product was removed from the database (the card is
+// then skipped on the Shop page until the admin picks another product).
 // Constraint names match the hand-written migration.
 @Entity('featured_cards')
 @Check('CHK_featured_cards_slot', '"slot" IN (1, 2)')

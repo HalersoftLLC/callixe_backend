@@ -24,7 +24,7 @@ import {
 } from '../../products/featured-cards.service';
 
 // Only validate a field when it was sent. Unlike @IsOptional(), this still
-// validates null, so imagePosition can't be set to null.
+// validates null, so productSlug and imagePosition can't be set to null.
 const isPresent = (_: object, value: unknown) => value !== undefined;
 
 // Route param for /admin/featured-cards/:slot. There are always two cards.
@@ -37,14 +37,15 @@ export class FeaturedCardSlotParamDto {
 
 // PATCH /admin/featured-cards/:slot. Card settings only: the product's own
 // details are changed with PATCH /admin/products/:slug.
-// - productSlug: a product's slug, or null to hide the card.
+// - productSlug: a product's slug. Not nullable: the Shop page always shows
+//   both cards, so a card can't be emptied through the API.
 // - promo: null or blank removes it.
 export class UpdateFeaturedCardDto {
-  @IsOptional()
+  @ValidateIf(isPresent)
   @IsString()
   @MaxLength(SLUG_MAX_LENGTH)
   @Matches(SLUG_PATTERN, { message: SLUG_MESSAGE })
-  productSlug?: string | null;
+  productSlug?: string;
 
   @ValidateIf(isPresent)
   @IsIn(FEATURED_IMAGE_POSITIONS, {

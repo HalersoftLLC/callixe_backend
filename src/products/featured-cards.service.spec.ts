@@ -184,17 +184,6 @@ describe('FeaturedCardsService', () => {
       );
     });
 
-    it('empties the card with productSlug null', async () => {
-      await service.updateCard(2, { productSlug: null });
-
-      expect(manager.findOneBy).not.toHaveBeenCalled();
-      expect(manager.update).toHaveBeenCalledWith(
-        FeaturedCard,
-        { slot: 2 },
-        { productId: null },
-      );
-    });
-
     it('sets a new active product that is not in the other card', async () => {
       const other = makeProduct({ id: 3, slug: 'eye-mask' });
       manager.findOneBy.mockResolvedValue(other);
