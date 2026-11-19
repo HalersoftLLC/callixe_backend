@@ -76,12 +76,14 @@ src/
 │   └── migrations/             # schema AND seed data (one `migration:run` does both)
 ├── products/
 │   ├── dto/                    # product-slug-param, product-response
-│   ├── entities/               # product, product-image
+│   ├── entities/               # product, product-image, shop-hero
 │   ├── storage/                # ImageStorage interface, local + Spaces drivers, provider
-│   ├── products.module.ts      # exports ProductsService (Orders, Admin) and ProductImagesService (Admin)
+│   ├── products.module.ts      # exports ProductsService (Orders, Admin), ProductImagesService and ShopHeroService (Admin)
 │   ├── products.controller.ts
 │   ├── products.service.ts     # public reads + admin CRUD; exports the types Admin uses
 │   ├── product-images.service.ts # upload/replace/reorder/delete images (storage + DB order rules)
+│   ├── shop-hero.controller.ts # GET /shop-hero
+│   ├── shop-hero.service.ts    # Shop page hero text + image (same image rules)
 │   ├── image-type.ts           # detects JPEG/PNG/WebP from file bytes
 │   └── *.spec.ts
 ├── orders/
@@ -109,6 +111,8 @@ src/
 │   ├── admin-auth.service.ts
 │   ├── admin-products.controller.ts # /admin/products
 │   ├── admin-product-images.controller.ts # /admin/products/:slug/images
+│   ├── admin-shop-hero.controller.ts # /admin/shop-hero
+│   ├── image-upload.options.ts # shared multer limits (5 MB, one file) for admin uploads
 │   ├── admin-orders.controller.ts    # /admin/orders (paid only, read-only)
 │   ├── admin-customers.controller.ts # /admin/customers
 │   ├── admin-dashboard.controller.ts # /admin/dashboard
@@ -140,6 +144,7 @@ The frontend depends on these endpoints. Do not change their shape without telli
 | POST | `/orders` | Create pending order, returns `{ orderId, orderNumber, total, checkoutUrl }`; the frontend redirects to `checkoutUrl` (Stripe-hosted page). 8/min per IP |
 | GET | `/orders/:id` | Order for the confirmation page (UUID v4, 400 if malformed, 404 if missing) |
 | POST | `/payments/webhook` | Stripe webhook only |
+| GET | `/shop-hero` | Shop page hero: `{ eyebrow, title, image: { url, alt } \| null }`; `null` image = storefront uses its own. 404 if the row is missing |
 
 Admin endpoints (used only by the admin app). Every route except login requires `Authorization: Bearer <token>` (`AdminGuard`):
 
@@ -155,6 +160,10 @@ Admin endpoints (used only by the admin app). Every route except login requires 
 | PATCH | `/admin/products/:slug/images/:imageId` | `{ isMain?: true, position? }` → all images in their new order |
 | PUT | `/admin/products/:slug/images/:imageId/file` | Replace the file of the same image |
 | DELETE | `/admin/products/:slug/images/:imageId` | 204; the next image becomes main if needed |
+| GET | `/admin/shop-hero` | `{ eyebrow, title, imageAlt, image: { url } \| null, updatedAt }` |
+| PATCH | `/admin/shop-hero` | `{ eyebrow?, title?, imageAlt? }` (eyebrow 1–150, title 1–100, imageAlt ≤ 200; `null`/blank clears imageAlt) |
+| PUT | `/admin/shop-hero/image` | Multipart `file`: upload or replace the hero image. Same type/size rules as product images |
+| DELETE | `/admin/shop-hero/image` | 204; the storefront shows its own image again |
 
 | GET | `/admin/orders` | `?email=&orderNumber=&from=&to=&sort=&page=&limit=` (dates `YYYY-MM-DD`, UTC, `to` inclusive) → paid orders page |
 | GET | `/admin/orders/:id` | One **paid** order (UUID v4); pending/failed → 404 |
@@ -242,11 +251,12 @@ Keep it minimal. The backend stores only what checkout and payment need.
 
 - **Product:** id, slug (unique, never changes after creation), name, price, compareAtPrice (nullable, must be greater than price), description (nullable), badge (nullable), active, createdAt, updatedAt.
 - **ProductImage:** id, productId (FK, cascade), storageKey (unique; never returned), contentType (jpeg/png/webp), isMain (one per product), position, createdAt. No URL column: URLs are `STORAGE_PUBLIC_URL + '/' + storageKey`.
+- **ShopHero:** exactly one row (`id = 1`, `CHK_shop_hero_single_row`): eyebrow, title, imageStorageKey + imageContentType (nullable, set and cleared together; never returned), imageAlt (nullable, falls back to title), updatedAt. Seeded by the `CreateShopHero` migration with the current storefront text and no image.
 - **DiscountCode:** code (unique, uppercase), type (`percent` | `fixed`), value, active.
 - **Order:** id (UUID, used in URLs), orderNumber (short, from 1001, for display and emails), email, delivery fields (firstName, lastName, address, apartment, city, postalCode, country, phone), subtotal, discountCode, discountAmount, shipping, total, currency, status (`pending` | `paid` | `failed`), stripeCheckoutSessionId (unique, nullable; set when the Checkout Session is created), stripePaymentIntentId (unique, nullable; set when the order is paid), createdAt, updatedAt. A database check enforces `total = subtotal - discount_amount + shipping`.
 - **OrderItem:** orderId, slug, name, unitPrice, quantity, lineTotal (copied at order time so later price changes do not alter past orders). No image column.
 
-**Display content is split.** The backend owns what the admin manages: `description`, `badge` and product images (`product_images` table). The frontend keeps layout-only fields (`promo`, `featured`, `imagePosition`) in `src/data/dummyData.js`, matched by `slug`, and falls back to its own `image`/`alt`/`description`/`badge` while the backend value is null. Do not add other display fields to backend tables without my permission. The frontend fetches `GET /products` for name and prices and merges them by slug, so the price shown always equals the price charged.
+**Display content is split.** The backend owns what the admin manages: `description`, `badge`, product images (`product_images` table) and the Shop page hero (`shop_hero` table). The frontend keeps layout-only fields (`promo`, `featured`, `imagePosition`) in `src/data/dummyData.js`, matched by `slug`, and falls back to its own `image`/`alt`/`description`/`badge` while the backend value is null. Do not add other display fields to backend tables without my permission. The frontend fetches `GET /products` for name and prices and merges them by slug, so the price shown always equals the price charged.
 
 Public API responses expose only `slug`, `name`, `price`, `compareAtPrice`, `description`, `badge`, `images` (`url`, `isMain`). Internal fields (`id`, `active`, timestamps) are never returned.
 

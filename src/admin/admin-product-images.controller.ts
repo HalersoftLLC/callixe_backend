@@ -4,7 +4,6 @@ import {
   Delete,
   HttpCode,
   Param,
-  ParseFilePipe,
   Patch,
   Post,
   Put,
@@ -15,7 +14,6 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
   type AdminProductImageView,
-  MAX_IMAGE_BYTES,
   ProductImagesService,
 } from '../products/product-images.service';
 import { AdminGuard } from './admin.guard';
@@ -25,18 +23,10 @@ import {
   UploadProductImageDto,
 } from './dto/product-image-dtos';
 import { ProductSlugParamDto } from './dto/product-slug-param.dto';
-
-// Multer stops reading at MAX_IMAGE_BYTES and answers 413, so an oversized
-// upload is never fully held in memory. One file per request, few fields.
-// Files stay in memory (no disk writes) until ProductImagesService checks
-// their real type and stores them.
-const IMAGE_UPLOAD_OPTIONS = {
-  limits: { fileSize: MAX_IMAGE_BYTES, files: 1, fields: 5 },
-};
-
-// "file" field is required; type and content are checked by the service
-// from the file's bytes, never from the client's mimetype or file name.
-const requiredFile = new ParseFilePipe({ fileIsRequired: true });
+import {
+  IMAGE_UPLOAD_OPTIONS,
+  requiredImageFile as requiredFile,
+} from './image-upload.options';
 
 @Controller('admin/products/:slug/images')
 @UseGuards(AdminGuard)

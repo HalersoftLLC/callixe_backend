@@ -572,6 +572,27 @@ different letter case. Then check:
 5. An unpaid or abandoned checkout appears nowhere.
 6. The backend log shows `/admin/orders` without `?email=…`.
 
+### Phase 5: Shop page hero (editable banner)
+
+**Backend (done):** `shop_hero` table with one row (migration `…009`, seeded with the current
+text, no image), `ShopHeroService` in the Products module (same image rules as product images),
+`GET /shop-hero` (public) and `GET|PATCH /admin/shop-hero`, `PUT|DELETE /admin/shop-hero/image`
+(admin). Details in CLAUDE.md sections 4 and 7.
+
+**Admin app (done):** sidebar "Shop hero" → `/content/shop-hero`.
+- Text card (small line, heading, image description) with counters, **Discard changes** and
+  **Save text**. Drafts are kept separately from the saved values.
+- Image card: picking a file uploads immediately (type and 5 MB checked first); **Remove image**
+  asks to confirm. An upload never touches unsaved text.
+- Approximate preview of the store hero, updated while typing.
+- Browser warns before closing/reloading with unsaved text (in-app links can't be blocked
+  without a React Router data router).
+
+**Storefront (done):** `ShopHeroSection` reads `GET /shop-hero` through `useShopHero` /
+`contentService.js` (normal 10 s timeout). No uploaded image → the bundled image; request
+fails → the `dummyData.js` text and image. Nothing is shown while loading (no flash of old
+content). Changes appear on the next page load.
+
 ### Final step: CLAUDE.md updates
 - Section 1: remove "admin panel" and "login/auth" from out of scope; note "admin only, single user".
 - Section 3: add the `admin/` module and the new Products files.

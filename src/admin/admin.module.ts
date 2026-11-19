@@ -12,6 +12,7 @@ import { AdminDashboardService } from './admin-dashboard.service';
 import { AdminOrdersController } from './admin-orders.controller';
 import { AdminProductImagesController } from './admin-product-images.controller';
 import { AdminProductsController } from './admin-products.controller';
+import { AdminShopHeroController } from './admin-shop-hero.controller';
 import { AdminAuthService } from './admin-auth.service';
 import { AdminGuard } from './admin.guard';
 
@@ -39,6 +40,7 @@ import { AdminGuard } from './admin.guard';
     AdminAuthController,
     AdminProductsController,
     AdminProductImagesController,
+    AdminShopHeroController,
     AdminOrdersController,
     AdminCustomersController,
     AdminDashboardController,
