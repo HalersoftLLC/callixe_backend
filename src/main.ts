@@ -41,8 +41,8 @@ async function bootstrap() {
     allowedHeaders: ['Content-Type', 'Authorization'],
   });
 
-  // Development image storage: serve ./uploads at /uploads, the same way the
-  // Spaces CDN serves files in production. Read-only, no directory listing,
+  // Local image storage (development and the production Droplet): serve
+  // ./uploads at /uploads. Read-only, no directory listing,
   // no dotfiles. Keys are never reused, so files can be cached forever.
   // nosniff stops a browser from treating an image as anything else.
   if (config.get('STORAGE_DRIVER', { infer: true }) === StorageDriver.Local) {

@@ -3,7 +3,8 @@ import { dirname, join, resolve, sep } from 'node:path';
 import { ImageStorage, joinPublicUrl } from './image-storage';
 
 // Folder for STORAGE_DRIVER=local, served by main.ts at UPLOADS_ROUTE.
-// Development only: validateEnv refuses this driver in production.
+// Also used in production on the Droplet, whose disk is permanent. Relative
+// to the working directory, so PM2 must start the app from the project folder.
 export const LOCAL_UPLOADS_DIR = join(process.cwd(), 'uploads');
 export const UPLOADS_ROUTE = '/uploads';
 
