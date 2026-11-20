@@ -178,6 +178,14 @@ describe('validateEnv', () => {
     });
   });
 
+  it('allows a test Stripe key in production', () => {
+    expect(() =>
+      validateEnv(
+        envWith({ NODE_ENV: 'production', STRIPE_SECRET_KEY: 'sk_test_1' }),
+      ),
+    ).not.toThrow();
+  });
+
   it('still rejects a live Stripe key outside production', () => {
     expect(() =>
       validateEnv(envWith({ STRIPE_SECRET_KEY: 'sk_live_123' })),

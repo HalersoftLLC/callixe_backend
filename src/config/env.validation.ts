@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { plainToInstance, Transform } from 'class-transformer';
 import {
   IsBoolean,
@@ -202,13 +203,15 @@ export function validateEnv(config: Record<string, unknown>) {
     throw new Error(`Invalid environment variables:\n  - ${details}`);
   }
 
-  // Guard against loading the wrong env file: live Stripe keys only in
-  // production, test keys everywhere else.
+  // Guard against loading the wrong env file. A live key outside production
+  // is refused (real charges from a dev machine). A test key in production
+  // is allowed while the live site is tested with Stripe test cards, but
+  // warned about on every start so it isn't forgotten.
   const isLiveKey = /^(sk|rk)_live_/.test(validated.STRIPE_SECRET_KEY);
   const isProduction = validated.NODE_ENV === Environment.Production;
   if (isProduction && !isLiveKey) {
-    throw new Error(
-      'NODE_ENV is "production" but STRIPE_SECRET_KEY is not a live key.',
+    new Logger('Environment').warn(
+      'NODE_ENV is "production" but STRIPE_SECRET_KEY is a test key: no real payments are taken.',
     );
   }
   if (!isProduction && isLiveKey) {
