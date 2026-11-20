@@ -120,12 +120,12 @@ describe('validateEnv', () => {
       ).toThrow('Invalid environment variables');
     });
 
-    it('refuses local storage in production (uploads are lost on deploy)', () => {
+    it('allows local storage in production (persistent Droplet disk)', () => {
       expect(() =>
         validateEnv(
           envWith({ NODE_ENV: 'production', STRIPE_SECRET_KEY: 'sk_live_1' }),
         ),
-      ).toThrow('STORAGE_DRIVER is not "spaces"');
+      ).not.toThrow();
     });
 
     it('accepts Spaces in production', () => {

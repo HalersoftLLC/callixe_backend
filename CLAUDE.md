@@ -397,7 +397,7 @@ SPACES_KEY=
 SPACES_SECRET=
 ```
 
-Image storage: `local` writes to `./uploads` (git-ignored) and `main.ts` serves it at `/uploads` (read-only, no listing, `nosniff`). It is for development only: `validateEnv` refuses it when `NODE_ENV=production`, because the app disk is wiped on every deploy. `spaces` uses DigitalOcean Spaces (public-read objects, private bucket). Switching is an env change only.
+Image storage: `local` writes to `./uploads` (git-ignored) and `main.ts` serves it at `/uploads` (read-only, no listing, `nosniff`). Production uses `local` too: the API runs on a DigitalOcean Droplet whose disk is permanent, so images live in `/home/callixe/callixe_backend/uploads` and survive restarts, `git pull` and rebuilds. Never run `git clean -x` there (it deletes ignored files, including `uploads/`). `local` must not be used on hosts with a wiped disk (e.g. App Platform). `spaces` uses DigitalOcean Spaces (public-read objects, private bucket). Switching is an env change only.
 
 `FRONTEND_URL` and `ADMIN_URL` must be bare origins (`http://localhost:5173`): `validateEnv` rejects a trailing slash or path, because the browser's `Origin` header would never match it.
 

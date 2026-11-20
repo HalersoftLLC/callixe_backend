@@ -34,7 +34,8 @@ export enum Environment {
 }
 
 // Where product images are stored. `local` writes to ./uploads and serves it
-// at /uploads (development only); `spaces` uses DigitalOcean Spaces.
+// at /uploads; production uses it on the Droplet, whose disk survives
+// restarts and deploys. `spaces` uses DigitalOcean Spaces.
 export enum StorageDriver {
   Local = 'local',
   Spaces = 'spaces',
@@ -220,14 +221,6 @@ export function validateEnv(config: Record<string, unknown>) {
   // would be silently ignored and the connection would be unencrypted.
   if (validated.DB_CA_CERT && !validated.DB_SSL) {
     throw new Error('DB_CA_CERT is set but DB_SSL is not "true".');
-  }
-
-  // The app's disk on DigitalOcean is wiped on every deploy, so local image
-  // storage would silently lose every uploaded product image.
-  if (isProduction && validated.STORAGE_DRIVER !== StorageDriver.Spaces) {
-    throw new Error(
-      'NODE_ENV is "production" but STORAGE_DRIVER is not "spaces". Local uploads are lost on every deploy.',
-    );
   }
 
   return validated;
