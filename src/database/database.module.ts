@@ -22,6 +22,7 @@ import { buildDataSourceOptions } from './typeorm.config';
           DB_PASSWORD: config.get('DB_PASSWORD', { infer: true }),
           DB_NAME: config.get('DB_NAME', { infer: true }),
           DB_SSL: config.get('DB_SSL', { infer: true }),
+          DB_CA_CERT: config.get('DB_CA_CERT', { infer: true }),
         }),
         // Entities registered with TypeOrmModule.forFeature() in each module
         // are picked up automatically; no global entity list to maintain.

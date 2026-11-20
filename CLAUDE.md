@@ -379,6 +379,7 @@ DB_USERNAME=
 DB_PASSWORD=
 DB_NAME=
 DB_SSL=false | true
+DB_CA_CERT=             # PEM CA of the database (DigitalOcean); only with DB_SSL=true; "\n" on one line is accepted
 STRIPE_SECRET_KEY=
 STRIPE_WEBHOOK_SECRET=
 CURRENCY=usd

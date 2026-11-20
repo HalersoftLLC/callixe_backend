@@ -12,6 +12,7 @@ export type DatabaseEnv = Pick<
   | 'DB_PASSWORD'
   | 'DB_NAME'
   | 'DB_SSL'
+  | 'DB_CA_CERT'
 >;
 
 // Single source of the PostgreSQL connection settings.
@@ -25,7 +26,15 @@ export function buildDataSourceOptions(env: DatabaseEnv): PostgresOptions {
     username: env.DB_USERNAME,
     password: env.DB_PASSWORD,
     database: env.DB_NAME,
-    ssl: env.DB_SSL ? { rejectUnauthorized: true } : false,
+    // Always verify the server certificate. Never rejectUnauthorized: false,
+    // which would accept any certificate (open to man-in-the-middle). A
+    // private CA (e.g. DigitalOcean) is trusted via DB_CA_CERT instead.
+    ssl: env.DB_SSL
+      ? {
+          rejectUnauthorized: true,
+          ...(env.DB_CA_CERT ? { ca: env.DB_CA_CERT } : {}),
+        }
+      : false,
 
     // UUIDs come from PostgreSQL's built-in gen_random_uuid() (PG 13+).
     // Never try CREATE EXTENSION on connect: managed databases may refuse it.

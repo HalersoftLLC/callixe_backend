@@ -141,6 +141,43 @@ describe('validateEnv', () => {
     });
   });
 
+  describe('database CA certificate', () => {
+    const pem =
+      '-----BEGIN CERTIFICATE-----\nMIIEQTCC\n-----END CERTIFICATE-----';
+
+    it('is optional', () => {
+      expect(validateEnv(validEnv).DB_CA_CERT).toBeUndefined();
+    });
+
+    it('treats a blank value as not set', () => {
+      const env = validateEnv(envWith({ DB_CA_CERT: '  ' }));
+      expect(env.DB_CA_CERT).toBeUndefined();
+    });
+
+    it('accepts a multi-line PEM with DB_SSL=true', () => {
+      const env = validateEnv(envWith({ DB_SSL: 'true', DB_CA_CERT: pem }));
+      expect(env.DB_CA_CERT).toBe(pem);
+    });
+
+    it('turns a one-line value with literal \\n back into line breaks', () => {
+      const oneLine = pem.replace(/\n/g, '\\n');
+      const env = validateEnv(envWith({ DB_SSL: 'true', DB_CA_CERT: oneLine }));
+      expect(env.DB_CA_CERT).toBe(pem);
+    });
+
+    it('rejects a value that is not a PEM certificate', () => {
+      expect(() =>
+        validateEnv(envWith({ DB_SSL: 'true', DB_CA_CERT: 'not-a-cert' })),
+      ).toThrow('DB_CA_CERT must be a PEM certificate');
+    });
+
+    it('rejects a CA certificate without DB_SSL', () => {
+      expect(() => validateEnv(envWith({ DB_CA_CERT: pem }))).toThrow(
+        'DB_CA_CERT is set but DB_SSL is not "true"',
+      );
+    });
+  });
+
   it('still rejects a live Stripe key outside production', () => {
     expect(() =>
       validateEnv(envWith({ STRIPE_SECRET_KEY: 'sk_live_123' })),

@@ -5,6 +5,7 @@ import {
   IsEnum,
   IsInt,
   IsNotEmpty,
+  IsOptional,
   IsString,
   IsUrl,
   Length,
@@ -43,6 +44,10 @@ export enum StorageDriver {
 // Spaces CDN URL. A path is allowed; a trailing slash is not (keys are
 // appended as "/<key>").
 const PUBLIC_BASE_URL_PATTERN = /^https?:\/\/[^?#\s]*[^/?#\s]$/;
+
+// One or more PEM certificates (a CA bundle may hold several).
+const PEM_CERTIFICATE_PATTERN =
+  /^-----BEGIN CERTIFICATE-----\r?\n[\s\S]+\r?\n-----END CERTIFICATE-----$/;
 
 const usesSpaces = (env: EnvironmentVariables) =>
   env.STORAGE_DRIVER === StorageDriver.Spaces;
@@ -109,6 +114,23 @@ export class EnvironmentVariables {
   })
   @IsBoolean()
   DB_SSL: boolean = false;
+
+  // CA certificate (PEM) that signed the database server's certificate.
+  // DigitalOcean Managed PostgreSQL uses its own CA, which Node does not
+  // trust by default, so without it a verified TLS connection fails.
+  // Hosting dashboards often store multi-line values on one line, so a
+  // literal "\n" is turned back into a line break. Blank = not set.
+  @Transform(({ value }: { value: unknown }) => {
+    if (typeof value !== 'string') return value;
+    const pem = value.replace(/\\n/g, '\n').trim();
+    return pem === '' ? undefined : pem;
+  })
+  @IsOptional()
+  @Matches(PEM_CERTIFICATE_PATTERN, {
+    message:
+      'DB_CA_CERT must be a PEM certificate (-----BEGIN CERTIFICATE----- ... -----END CERTIFICATE-----)',
+  })
+  DB_CA_CERT?: string;
 
   @IsString()
   @IsNotEmpty()
@@ -192,6 +214,12 @@ export function validateEnv(config: Record<string, unknown>) {
     throw new Error(
       `NODE_ENV is "${validated.NODE_ENV}" but STRIPE_SECRET_KEY is a live key. Use a test key (sk_test_...).`,
     );
+  }
+
+  // A CA certificate only matters for an SSL connection; without DB_SSL it
+  // would be silently ignored and the connection would be unencrypted.
+  if (validated.DB_CA_CERT && !validated.DB_SSL) {
+    throw new Error('DB_CA_CERT is set but DB_SSL is not "true".');
   }
 
   // The app's disk on DigitalOcean is wiped on every deploy, so local image
