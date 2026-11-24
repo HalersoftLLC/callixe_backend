@@ -1,6 +1,6 @@
 # Admin Module Plan (backend only)
 
-Status: **Phase 1 done. Phases 2–4 implemented; waiting for migrations (…007, …008) + tests + lint + browser checks. Images use local storage (`STORAGE_DRIVER=local`); Spaces later = env change only.** CLAUDE.md overrides this file if they conflict.
+Status: **Phase 1 done. Phases 2–4 implemented; waiting for migrations (…007, …008) + tests + lint + browser checks. Images use local storage (`STORAGE_DRIVER=local`); Spaces later = env change only. Phase 7 (Mark as shipped) implemented; waiting for migration …011 + tests.** CLAUDE.md overrides this file if they conflict.
 
 Work runs in phases. After each phase Claude stops for review. The owner runs every
 install, migration, build and test command.
@@ -616,6 +616,28 @@ never both. Falls back to `dummyData.js` `featured`/`promo`/`imagePosition` if t
 With the whole backend down, the featured cards **and** the product grid show the built-in
 `dummyData.js` text and asset images (like the Shop hero), with no error message and no prices. The product
 page shows the promo of the card holding that product.
+
+### Phase 7: Mark as shipped (one button, one email)
+
+**Scope:** one fulfillment step only. No tracking number, courier, out-for-delivery or delivered
+steps, and nothing on the storefront. Payment status is untouched (webhook only).
+
+**Backend (implemented; waiting for migration `…011` + tests):** two nullable `orders` columns,
+`shipped_at` (null = unfulfilled) and `shipping_email_sent_at`. `POST /admin/orders/:id/ship`
+(no body, paid orders only, else 404) → `OrdersService.markShipped`: sets `shipped_at` once
+(`WHERE status = 'paid' AND shipped_at IS NULL`, so two clicks keep the first date), then awaits
+`OrderEmailsService.sendShipped`, which emails "Your order #N is on its way" (builder
+`orders/emails/order-shipped.email.ts`: items, total paid, delivery address, no links) with the
+usual `ORDER_NOTIFY_EMAIL` BCC, and records `shipping_email_sent_at` only after Brevo accepts it.
+Calling it on a shipped order only resends the email. Brevo failure → order stays shipped,
+response `emailSent: false`. `GET /admin/orders` gains `shippedAt` per row and `?shipped=true|false`;
+`GET /admin/orders/:id` gains `fulfillment: { shippedAt, emailSentAt }`.
+
+**Admin app (implemented):** `ShipOrderButton` (confirm box → POST → "Shipped. Email sent." /
+"Shipped, but the email failed. Try Resend."; disabled while sending). Orders table: "Shipping"
+column with an Unfulfilled / "Shipped <date>" badge and the button on unfulfilled rows. Order
+detail: "Shipping" card with status, last email time and Mark as shipped / Resend shipping email.
+Orders page: "Shipping" filter (All / Unfulfilled / Shipped).
 
 ### Final step: CLAUDE.md updates
 - Section 1: remove "admin panel" and "login/auth" from out of scope; note "admin only, single user".

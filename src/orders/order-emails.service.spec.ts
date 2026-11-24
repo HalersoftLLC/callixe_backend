@@ -45,7 +45,7 @@ const PAID_ORDER = {
 
 describe('OrderEmailsService', () => {
   let service: OrderEmailsService;
-  const ordersRepository = { findOne: jest.fn() };
+  const ordersRepository = { findOne: jest.fn(), update: jest.fn() };
   const emailService = { send: jest.fn() };
   let log: jest.SpyInstance;
   let warn: jest.SpyInstance;
@@ -164,5 +164,67 @@ describe('OrderEmailsService', () => {
     expect(warn).toHaveBeenCalledWith(
       'Confirmation email: order order-uuid not found',
     );
+  });
+
+  describe('sendShipped', () => {
+    beforeEach(() => {
+      ordersRepository.update.mockResolvedValue({ affected: 1 });
+    });
+
+    it('emails the customer and records when it was sent', async () => {
+      env.ORDER_NOTIFY_EMAIL = 'owner@example.com';
+
+      const sentAt = await service.sendShipped('order-uuid');
+
+      expect(sentAt).toBeInstanceOf(Date);
+      expect(emailService.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: { email: 'customer@example.com', name: 'Ada Lovelace' },
+          bcc: ['owner@example.com'],
+          subject: 'Your order #1001 is on its way – Callixe',
+          tags: ['order-shipped'],
+        }),
+      );
+      expect(ordersRepository.update).toHaveBeenCalledWith(
+        { id: 'order-uuid' },
+        { shippingEmailSentAt: sentAt },
+      );
+      expect(log).toHaveBeenCalledWith(
+        'Shipping email sent for order #1001 (<m1@brevo>)',
+      );
+    });
+
+    it('returns null and records nothing when Brevo fails', async () => {
+      emailService.send.mockRejectedValue(new Error('Brevo responded 500'));
+
+      await expect(service.sendShipped('order-uuid')).resolves.toBeNull();
+
+      expect(ordersRepository.update).not.toHaveBeenCalled();
+      expect(error).toHaveBeenCalledWith(
+        'Shipping email failed for order order-uuid: Brevo responded 500',
+      );
+    });
+
+    it('returns null for a missing order', async () => {
+      ordersRepository.findOne.mockResolvedValue(null);
+
+      await expect(service.sendShipped('order-uuid')).resolves.toBeNull();
+
+      expect(emailService.send).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(
+        'Shipping email: order order-uuid not found',
+      );
+    });
+
+    it('still reports the email as sent if saving the time fails', async () => {
+      ordersRepository.update.mockRejectedValue(new Error('connection lost'));
+
+      await expect(service.sendShipped('order-uuid')).resolves.toBeInstanceOf(
+        Date,
+      );
+      expect(error).toHaveBeenCalledWith(
+        'Shipping email time not saved for order #1001: connection lost',
+      );
+    });
   });
 });

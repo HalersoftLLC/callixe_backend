@@ -42,11 +42,21 @@ export interface PaymentOutcome {
   paymentIntentId: string | null;
   amountTotal: number | null;
   currency: string | null;
+  // What the customer paid in their own currency (Adaptive Pricing). For
+  // display only: the payment check always uses amountTotal/currency, which
+  // Stripe keeps in the integration currency. Null when not converted.
+  presentment: { amount: number; currency: string } | null;
 }
 
 // Docs followed: https://docs.stripe.com/checkout/fulfillment,
 // https://docs.stripe.com/api/checkout/sessions/create,
+// https://docs.stripe.com/api/checkout/sessions/object (presentment_details),
+// https://docs.stripe.com/payments/currencies/localize-prices/adaptive-pricing,
 // https://docs.stripe.com/webhooks, https://github.com/stripe/stripe-node
+//
+// Adaptive Pricing (local-currency payment) is switched on in the Stripe
+// Dashboard, not here. Sessions are still created in CURRENCY; Stripe converts
+// on its page and keeps amount_total/currency in CURRENCY.
 @Injectable()
 export class PaymentsService {
   private readonly logger = new Logger(PaymentsService.name);
@@ -165,6 +175,28 @@ export class PaymentsService {
           : (paymentIntent?.id ?? null),
       amountTotal: session.amount_total,
       currency: session.currency,
+      presentment: toPresentment(session),
     };
   }
+}
+
+// Only a real conversion is kept: missing, malformed or same-currency
+// details give null.
+function toPresentment(
+  session: Stripe.Checkout.Session,
+): PaymentOutcome['presentment'] {
+  const details = session.presentment_details;
+  const amount = details?.presentment_amount;
+  const currency = details?.presentment_currency?.toLowerCase();
+  if (
+    typeof amount !== 'number' ||
+    !Number.isSafeInteger(amount) ||
+    amount < 0 ||
+    !currency ||
+    !/^[a-z]{3}$/.test(currency) ||
+    currency === session.currency?.toLowerCase()
+  ) {
+    return null;
+  }
+  return { amount, currency };
 }

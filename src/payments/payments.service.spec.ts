@@ -216,7 +216,41 @@ describe('PaymentsService', () => {
         paymentIntentId: 'pi_1',
         amountTotal: 72600,
         currency: 'usd',
+        presentment: null,
       });
+    });
+
+    it('keeps the customer currency from Adaptive Pricing, amount check stays USD', () => {
+      const outcome = service.toPaymentOutcome(
+        makeEvent('checkout.session.completed', {
+          presentment_details: {
+            presentment_amount: 20480000,
+            presentment_currency: 'PKR',
+          },
+        }),
+      );
+
+      expect(outcome).toMatchObject({
+        amountTotal: 72600,
+        currency: 'usd',
+        presentment: { amount: 20480000, currency: 'pkr' },
+      });
+    });
+
+    // prettier-ignore
+    it.each([
+      ['same currency as the order', { presentment_amount: 72600, presentment_currency: 'usd' }],
+      ['a negative amount', { presentment_amount: -1, presentment_currency: 'pkr' }],
+      ['a fractional amount', { presentment_amount: 1.5, presentment_currency: 'pkr' }],
+      ['a malformed currency', { presentment_amount: 100, presentment_currency: 'rupees' }],
+    ])('ignores presentment details with %s', (_label, details) => {
+      expect(
+        service.toPaymentOutcome(
+          makeEvent('checkout.session.completed', {
+            presentment_details: details,
+          }),
+        ),
+      ).toMatchObject({ presentment: null });
     });
 
     it('waits on a completed session that is not paid yet', () => {

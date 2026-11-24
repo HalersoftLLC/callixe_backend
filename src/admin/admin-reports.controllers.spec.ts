@@ -4,6 +4,7 @@ import { Test } from '@nestjs/testing';
 import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import { OrderReportsService } from '../orders/order-reports.service';
+import { OrdersService } from '../orders/orders.service';
 import { ProductsService } from '../products/products.service';
 import { AdminCustomersController } from './admin-customers.controller';
 import { AdminDashboardController } from './admin-dashboard.controller';
@@ -30,6 +31,7 @@ describe('Admin report controllers', () => {
     getStats: jest.fn(),
   };
   const productsService = { countByActive: jest.fn() };
+  const ordersService = { markShipped: jest.fn() };
 
   beforeEach(async () => {
     jest.resetAllMocks();
@@ -43,6 +45,7 @@ describe('Admin report controllers', () => {
         AdminDashboardService,
         { provide: OrderReportsService, useValue: orderReportsService },
         { provide: ProductsService, useValue: productsService },
+        { provide: OrdersService, useValue: ordersService },
         AdminGuard,
         { provide: JwtService, useValue: {} },
       ],
@@ -83,6 +86,18 @@ describe('Admin report controllers', () => {
 
     await expect(ordersController.findOne(ORDER_ID)).resolves.toBe(detail);
     expect(orderReportsService.findPaidOrder).toHaveBeenCalledWith(ORDER_ID);
+  });
+
+  it('POST /admin/orders/:id/ship marks shipped and reports the email', async () => {
+    const result = {
+      shippedAt: new Date('2026-11-25T09:00:00Z'),
+      shippingEmailSentAt: new Date('2026-11-25T09:00:01Z'),
+      emailSent: true,
+    };
+    ordersService.markShipped.mockResolvedValue(result);
+
+    await expect(ordersController.ship(ORDER_ID)).resolves.toBe(result);
+    expect(ordersService.markShipped).toHaveBeenCalledWith(ORDER_ID);
   });
 
   it('GET /admin/customers/detail passes the email and paging', async () => {
@@ -141,6 +156,7 @@ describe('report query DTOs', () => {
     const { dto, errors } = validate(ListOrdersQueryDto, {
       email: ' Ada@Example.com ',
       orderNumber: '1005',
+      shipped: 'false',
       from: '2026-11-01',
       to: '2026-11-13',
     });
@@ -148,6 +164,7 @@ describe('report query DTOs', () => {
     expect(dto).toMatchObject({
       email: 'Ada@Example.com',
       orderNumber: 1005,
+      shipped: false,
       sort: '-createdAt',
       page: 1,
       limit: 20,
@@ -158,6 +175,7 @@ describe('report query DTOs', () => {
     ['an invalid email', { email: 'nope' }],
     ['an order number below 1001', { orderNumber: '1000' }],
     ['a non-numeric order number', { orderNumber: 'abc' }],
+    ['shipped other than true/false', { shipped: 'yes' }],
     ['a date with a time', { from: '2026-11-01T00:00:00Z' }],
     ['an impossible date', { to: '2026-02-30' }],
     ['a non-date', { from: 'yesterday' }],

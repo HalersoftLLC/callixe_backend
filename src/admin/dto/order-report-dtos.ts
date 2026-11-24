@@ -1,5 +1,6 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsEmail,
   IsIn,
   IsISO8601,
@@ -26,7 +27,7 @@ const EMAIL_MAX_LENGTH = 254;
 // Order numbers start at 1001 (CLAUDE.md section 7).
 const FIRST_ORDER_NUMBER = 1001;
 
-// GET /admin/orders?email=&orderNumber=&from=&to=&sort=&page=&limit=
+// GET /admin/orders?email=&orderNumber=&shipped=&from=&to=&sort=&page=&limit=
 // "from" after "to" is rejected by OrderReportsService (needs both values).
 export class ListOrdersQueryDto extends PaginationQueryDto {
   @TrimOrUndefined()
@@ -40,6 +41,17 @@ export class ListOrdersQueryDto extends PaginationQueryDto {
   @IsInt()
   @Min(FIRST_ORDER_NUMBER)
   orderNumber?: number;
+
+  // Only the exact words "true"/"false" count (same rule as products'
+  // ?active=); anything else stays text and fails @IsBoolean.
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) => {
+    if (value === 'true') return true;
+    if (value === 'false') return false;
+    return value;
+  })
+  @IsBoolean()
+  shipped?: boolean;
 
   // Strict ISO check also rejects impossible dates such as 2026-02-30.
   @IsOptional()

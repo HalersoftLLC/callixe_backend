@@ -3,6 +3,7 @@ import { Order, OrderStatus } from '../entities/order.entity';
 import {
   buildOrderConfirmationEmail,
   escapeHtml,
+  moneyFormatter,
 } from './order-confirmation.email';
 
 const OPTIONS = {
@@ -29,9 +30,13 @@ function makeOrder(overrides: Partial<Order> = {}): Order {
     shipping: 0,
     total: 72600,
     currency: 'usd',
+    presentmentAmount: null,
+    presentmentCurrency: null,
     status: OrderStatus.Paid,
     stripeCheckoutSessionId: 'cs_test_1',
     stripePaymentIntentId: 'pi_1',
+    shippedAt: null,
+    shippingEmailSentAt: null,
     items: [
       {
         id: 1,
@@ -90,6 +95,22 @@ describe('buildOrderConfirmationEmail', () => {
     expect(discounted.text).toContain('Discount (WELCOME10): -$72.60');
   });
 
+  it('adds what the customer paid in their own currency, after the USD total', () => {
+    const plain = buildOrderConfirmationEmail(makeOrder(), OPTIONS);
+    expect(plain.html).not.toContain('Paid in your currency');
+    expect(plain.text).not.toContain('Paid in your currency');
+
+    const converted = buildOrderConfirmationEmail(
+      makeOrder({ presentmentAmount: 20480000, presentmentCurrency: 'pkr' }),
+      OPTIONS,
+    );
+    expect(converted.html).toContain('$726.00');
+    expect(converted.html).toContain('Paid in your currency');
+    expect(converted.html).toContain('PKR');
+    expect(converted.html).toContain('204,800.00');
+    expect(converted.text).toContain('Total: $726.00\nPaid in your currency: PKR');
+  });
+
   it('leaves out empty optional address lines', () => {
     const { text } = buildOrderConfirmationEmail(
       makeOrder({ apartment: 'Flat 2', postalCode: null, phone: '+92 300' }),
@@ -111,6 +132,15 @@ describe('buildOrderConfirmationEmail', () => {
     expect(html).not.toContain('<script>');
     expect(html).not.toContain('href="https://evil.example"');
     expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+  });
+});
+
+describe('moneyFormatter', () => {
+  it('uses each currency’s smallest unit', () => {
+    expect(moneyFormatter('usd')(72600)).toBe('$726.00');
+    expect(moneyFormatter('jpy')(1500)).toBe('¥1,500');
+    // Intl puts a non-breaking space after the code.
+    expect(moneyFormatter('kwd')(1234)).toMatch(/^KWD\s1\.234$/);
   });
 });
 

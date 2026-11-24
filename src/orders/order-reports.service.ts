@@ -6,6 +6,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { escapeLikePattern, type Page } from '../products/products.service';
+import { toPresentmentResponse } from './dto/order-response.dto';
 import { Order, OrderStatus } from './entities/order.entity';
 
 // Read-only reports for the admin panel. Kept apart from OrdersService, which
@@ -41,6 +42,7 @@ export type CustomerSort = (typeof CUSTOMER_SORT_OPTIONS)[number];
 export interface PaidOrderListOptions {
   email?: string;
   orderNumber?: number;
+  shipped?: boolean;
   from?: string; // YYYY-MM-DD, UTC, inclusive
   to?: string; // YYYY-MM-DD, UTC, inclusive (whole day)
   sort: OrderSort;
@@ -64,6 +66,14 @@ export interface AdminOrderListItem {
   country: string;
   itemCount: number;
   total: number;
+  currency: string;
+  // Display only (Stripe Adaptive Pricing): what the customer paid locally.
+  presentment: Presentment | null;
+  shippedAt: Date | null;
+}
+
+export interface Presentment {
+  amount: number;
   currency: string;
 }
 
@@ -99,9 +109,15 @@ export interface AdminOrderDetail {
   shipping: number;
   total: number;
   currency: string;
+  presentment: Presentment | null;
   stripe: {
     checkoutSessionId: string | null;
     paymentIntentId: string | null;
+  };
+  // Admin "Mark as shipped" (not the shipping price above).
+  fulfillment: {
+    shippedAt: Date | null;
+    emailSentAt: Date | null;
   };
 }
 
@@ -189,6 +205,9 @@ interface OrderListRow {
   item_count: string | number;
   total: number;
   currency: string;
+  presentment_amount: number | null;
+  presentment_currency: string | null;
+  shipped_at: Date | null;
 }
 
 interface CustomerRow {
@@ -251,6 +270,12 @@ export class OrderReportsService {
     if (options.orderNumber !== undefined) {
       conditions.push(`o.order_number = ${bind(options.orderNumber)}`);
     }
+    // Fixed SQL, no user text: shipped is already a boolean.
+    if (options.shipped !== undefined) {
+      conditions.push(
+        options.shipped ? 'o.shipped_at IS NOT NULL' : 'o.shipped_at IS NULL',
+      );
+    }
     if (options.from && options.to && options.from > options.to) {
       throw new BadRequestException('"from" must not be after "to"');
     }
@@ -281,6 +306,7 @@ export class OrderReportsService {
       this.ordersRepository.query<OrderListRow[]>(
         `SELECT o.id, o.order_number, o.created_at, o.first_name, o.last_name,
                 o.email, o.country, o.total, o.currency,
+                o.presentment_amount, o.presentment_currency, o.shipped_at,
                 (SELECT COALESCE(SUM(i.quantity), 0)
                    FROM order_items i WHERE i.order_id = o.id) AS item_count
          FROM orders o
@@ -489,6 +515,11 @@ function toOrderListItem(row: OrderListRow): AdminOrderListItem {
     itemCount: toSafeInteger(row.item_count),
     total: row.total,
     currency: row.currency,
+    presentment: toPresentmentResponse({
+      presentmentAmount: row.presentment_amount,
+      presentmentCurrency: row.presentment_currency,
+    }),
+    shippedAt: row.shipped_at,
   };
 }
 
@@ -539,9 +570,14 @@ function toOrderDetail(order: Order): AdminOrderDetail {
     shipping: order.shipping,
     total: order.total,
     currency: order.currency,
+    presentment: toPresentmentResponse(order),
     stripe: {
       checkoutSessionId: order.stripeCheckoutSessionId,
       paymentIntentId: order.stripePaymentIntentId,
+    },
+    fulfillment: {
+      shippedAt: order.shippedAt,
+      emailSentAt: order.shippingEmailSentAt,
     },
   };
 }

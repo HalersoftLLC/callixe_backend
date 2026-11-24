@@ -26,6 +26,7 @@ describe('PaymentsController (webhook)', () => {
     paymentIntentId: 'pi_1',
     amountTotal: 72600,
     currency: 'usd',
+    presentment: null,
   };
 
   beforeEach(async () => {

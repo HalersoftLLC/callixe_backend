@@ -33,6 +33,10 @@ export enum OrderStatus {
   'CHK_orders_total',
   '"total" = "subtotal" - "discount_amount" + "shipping"',
 )
+@Check(
+  'CHK_orders_presentment',
+  '("presentment_amount" IS NULL AND "presentment_currency" IS NULL) OR ("presentment_amount" >= 0 AND "presentment_currency" IS NOT NULL)',
+)
 // Admin reports read paid orders by date and group customers by email.
 // The lower(email) expression index is created in the migration
 // (1794441600008); TypeORM can't declare expression indexes, so
@@ -98,6 +102,22 @@ export class Order {
   @Column({ type: 'varchar', length: 3 })
   currency!: string;
 
+  // What the customer actually paid in their own currency when Stripe
+  // Adaptive Pricing converted the price (Checkout Session
+  // `presentment_details`), set by the webhook with the paid status. Display
+  // only: prices, totals and reports always use `total` / `currency`. Null =
+  // paid in `currency`, or not paid yet. Smallest unit of that currency.
+  @Column({ name: 'presentment_amount', type: 'integer', nullable: true })
+  presentmentAmount!: number | null;
+
+  @Column({
+    name: 'presentment_currency',
+    type: 'varchar',
+    length: 3,
+    nullable: true,
+  })
+  presentmentCurrency!: string | null;
+
   @Column({ type: 'varchar', length: 20, default: OrderStatus.Pending })
   status!: OrderStatus;
 
@@ -119,6 +139,18 @@ export class Order {
     nullable: true,
   })
   stripePaymentIntentId!: string | null;
+
+  // Set once by the admin's "Mark as shipped"; null = not shipped yet.
+  @Column({ name: 'shipped_at', type: 'timestamptz', nullable: true })
+  shippedAt!: Date | null;
+
+  // Last time the "on its way" email was actually sent (not attempted).
+  @Column({
+    name: 'shipping_email_sent_at',
+    type: 'timestamptz',
+    nullable: true,
+  })
+  shippingEmailSentAt!: Date | null;
 
   @OneToMany(() => OrderItem, (item) => item.order)
   items!: OrderItem[];

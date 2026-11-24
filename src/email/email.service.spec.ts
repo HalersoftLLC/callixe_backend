@@ -84,9 +84,7 @@ describe('EmailService', () => {
   });
 
   it('adds hidden copies (bcc) only when given', async () => {
-    fetchMock.mockResolvedValue(
-      jsonResponse(201, { messageId: '<m1@brevo>' }),
-    );
+    fetchMock.mockResolvedValue(jsonResponse(201, { messageId: '<m1@brevo>' }));
 
     await service.send({ ...MESSAGE, bcc: ['owner@example.com'] });
 

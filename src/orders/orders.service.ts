@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Not, Repository } from 'typeorm';
+import { DataSource, IsNull, Not, Repository } from 'typeorm';
 import { EnvironmentVariables } from '../config/env.validation';
 import { PaymentOutcome, PaymentsService } from '../payments/payments.service';
 import { ProductsService } from '../products/products.service';
@@ -18,6 +18,13 @@ import { Order, OrderStatus } from './entities/order.entity';
 import { OrderEmailsService } from './order-emails.service';
 import { STANDARD_SHIPPING_PRICE } from './orders.constants';
 import { calculateLineTotal, calculateTotals } from './pricing';
+
+export interface ShipOrderResult {
+  shippedAt: Date;
+  // Last successful send (this one, or an earlier one if this one failed).
+  shippingEmailSentAt: Date | null;
+  emailSent: boolean;
+}
 
 @Injectable()
 export class OrdersService {
@@ -89,11 +96,15 @@ export class OrdersService {
         );
         return;
       }
+      // presentment_* only records what the customer saw in their own
+      // currency (Adaptive Pricing); the check above is on the order currency.
       const { affected } = await this.ordersRepository.update(
         { id: order.id, status: Not(OrderStatus.Paid) },
         {
           status: OrderStatus.Paid,
           stripePaymentIntentId: outcome.paymentIntentId,
+          presentmentAmount: outcome.presentment?.amount ?? null,
+          presentmentCurrency: outcome.presentment?.currency ?? null,
         },
       );
       this.logger.log(
@@ -119,6 +130,44 @@ export class OrdersService {
         ? `${tag} → ${label} failed`
         : `${tag} → ${label} not pending, unchanged`,
     );
+  }
+
+  // Admin "Mark as shipped" (and "Resend shipping email"): one call sets
+  // shipped_at the first time and emails the customer every time. Only paid
+  // orders; payment status itself is never touched here. The email is
+  // awaited because the admin is waiting to see whether it went out.
+  async markShipped(id: string): Promise<ShipOrderResult> {
+    const order = await this.ordersRepository.findOneBy({
+      id,
+      status: OrderStatus.Paid,
+    });
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
+
+    let shippedAt = order.shippedAt;
+    if (!shippedAt) {
+      const now = new Date();
+      // The condition keeps the first shipping date if two clicks race.
+      const { affected } = await this.ordersRepository.update(
+        { id, status: OrderStatus.Paid, shippedAt: IsNull() },
+        { shippedAt: now },
+      );
+      if (affected) {
+        shippedAt = now;
+        this.logger.log(`Order #${order.orderNumber} marked shipped`);
+      } else {
+        const current = await this.ordersRepository.findOneBy({ id });
+        shippedAt = current?.shippedAt ?? now;
+      }
+    }
+
+    const sentAt = await this.orderEmailsService.sendShipped(id);
+    return {
+      shippedAt,
+      shippingEmailSentAt: sentAt ?? order.shippingEmailSentAt,
+      emailSent: sentAt !== null,
+    };
   }
 
   // Prices come only from the database via ProductsService; the request

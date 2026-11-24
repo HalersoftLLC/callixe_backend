@@ -50,6 +50,9 @@ export class OrderResponseDto {
   shipping!: number;
   total!: number;
   currency!: string;
+  // What the customer paid in their own currency (Stripe Adaptive Pricing);
+  // null when they paid in `currency` or the order isn't paid. Display only.
+  presentment!: { amount: number; currency: string } | null;
 
   static fromEntity(order: Order): OrderResponseDto {
     return {
@@ -79,8 +82,18 @@ export class OrderResponseDto {
       shipping: order.shipping,
       total: order.total,
       currency: order.currency,
+      presentment: toPresentmentResponse(order),
     };
   }
+}
+
+// Shared by the public and admin order responses.
+export function toPresentmentResponse(
+  order: Pick<Order, 'presentmentAmount' | 'presentmentCurrency'>,
+): { amount: number; currency: string } | null {
+  return order.presentmentAmount !== null && order.presentmentCurrency
+    ? { amount: order.presentmentAmount, currency: order.presentmentCurrency }
+    : null;
 }
 
 export class DiscountResponseDto {

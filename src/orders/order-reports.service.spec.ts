@@ -17,6 +17,9 @@ const orderRow = {
   item_count: '3',
   total: 32670,
   currency: 'usd',
+  presentment_amount: 9050000,
+  presentment_currency: 'pkr',
+  shipped_at: null,
 };
 
 const customerRow = {
@@ -86,6 +89,8 @@ describe('OrderReportsService', () => {
             itemCount: 3,
             total: 32670,
             currency: 'usd',
+            presentment: { amount: 9050000, currency: 'pkr' },
+            shippedAt: null,
           },
         ],
         page: 3,
@@ -100,6 +105,41 @@ describe('OrderReportsService', () => {
       expect(listParams).toEqual([OrderStatus.Paid, 20, 40]);
       expect(listSql).toContain('ORDER BY o.created_at DESC, o.id ASC');
       expect(listSql).toContain('LIMIT $2 OFFSET $3');
+      expect(listSql).toContain('o.shipped_at');
+      expect(listSql).toContain('o.presentment_amount, o.presentment_currency');
+    });
+
+    it('returns null presentment for an order paid in the store currency', async () => {
+      answerWith([
+        { ...orderRow, presentment_amount: null, presentment_currency: null },
+      ]);
+
+      const page = await service.listPaidOrders({
+        sort: '-createdAt',
+        page: 1,
+        limit: 20,
+      });
+
+      expect(page.items[0].presentment).toBeNull();
+    });
+
+    it.each([
+      [true, 'o.shipped_at IS NOT NULL'],
+      [false, 'o.shipped_at IS NULL'],
+    ])('filters by shipped=%s with fixed SQL', async (shipped, condition) => {
+      answerWith([]);
+
+      await service.listPaidOrders({
+        shipped,
+        sort: '-createdAt',
+        page: 1,
+        limit: 20,
+      });
+
+      const [[countSql, countParams], [listSql]] = queryCalls();
+      expect(countSql).toContain(condition);
+      expect(listSql).toContain(condition);
+      expect(countParams).toEqual([OrderStatus.Paid]);
     });
 
     it('binds every filter as a parameter, never into the SQL text', async () => {
@@ -211,8 +251,12 @@ describe('OrderReportsService', () => {
         shipping: 0,
         total: 32670,
         currency: 'usd',
+        presentmentAmount: 9050000,
+        presentmentCurrency: 'pkr',
         stripeCheckoutSessionId: 'cs_test_1',
         stripePaymentIntentId: 'pi_test_1',
+        shippedAt: new Date('2026-11-02T09:00:00Z'),
+        shippingEmailSentAt: new Date('2026-11-02T09:00:05Z'),
         createdAt: new Date('2026-11-01'),
         updatedAt: new Date('2026-11-01'),
         items: [
@@ -248,7 +292,12 @@ describe('OrderReportsService', () => {
         checkoutSessionId: 'cs_test_1',
         paymentIntentId: 'pi_test_1',
       });
+      expect(detail.fulfillment).toEqual({
+        shippedAt: new Date('2026-11-02T09:00:00Z'),
+        emailSentAt: new Date('2026-11-02T09:00:05Z'),
+      });
       expect(detail.total).toBe(32670);
+      expect(detail.presentment).toEqual({ amount: 9050000, currency: 'pkr' });
     });
   });
 

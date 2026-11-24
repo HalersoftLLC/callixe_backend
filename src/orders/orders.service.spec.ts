@@ -7,7 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { DataSource, Not } from 'typeorm';
+import { DataSource, IsNull, Not } from 'typeorm';
 import { PaymentOutcome, PaymentsService } from '../payments/payments.service';
 import { Product } from '../products/entities/product.entity';
 import { ProductsService } from '../products/products.service';
@@ -61,7 +61,10 @@ describe('OrdersService', () => {
   const discountCodesRepository = { findOneBy: jest.fn() };
   const productsService = { findActiveBySlugs: jest.fn() };
   const paymentsService = { createCheckoutSession: jest.fn() };
-  const orderEmailsService = { sendConfirmation: jest.fn() };
+  const orderEmailsService = {
+    sendConfirmation: jest.fn(),
+    sendShipped: jest.fn(),
+  };
   const config = { get: jest.fn() };
 
   // Fake transaction manager: records what would be written.
@@ -308,6 +311,7 @@ describe('OrdersService', () => {
         paymentIntentId: 'pi_1',
         amountTotal: 72600,
         currency: 'usd',
+        presentment: null,
         ...overrides,
       };
     }
@@ -333,11 +337,44 @@ describe('OrdersService', () => {
       });
       expect(ordersRepository.update).toHaveBeenCalledWith(
         { id: 'order-uuid', status: Not(OrderStatus.Paid) },
-        { status: OrderStatus.Paid, stripePaymentIntentId: 'pi_1' },
+        {
+          status: OrderStatus.Paid,
+          stripePaymentIntentId: 'pi_1',
+          presentmentAmount: null,
+          presentmentCurrency: null,
+        },
       );
       expect(log).toHaveBeenCalledWith(
         'evt_1 checkout.session.completed → order #1001 paid',
       );
+    });
+
+    it('saves what the customer paid locally with the paid status', async () => {
+      await service.applyPaymentOutcome(
+        makeOutcome({ presentment: { amount: 20480000, currency: 'pkr' } }),
+      );
+
+      expect(ordersRepository.update).toHaveBeenCalledWith(
+        { id: 'order-uuid', status: Not(OrderStatus.Paid) },
+        {
+          status: OrderStatus.Paid,
+          stripePaymentIntentId: 'pi_1',
+          presentmentAmount: 20480000,
+          presentmentCurrency: 'pkr',
+        },
+      );
+    });
+
+    it('checks the order currency, never the local one', async () => {
+      // A converted payment still has to match the USD total to be paid.
+      await service.applyPaymentOutcome(
+        makeOutcome({
+          amountTotal: 1,
+          presentment: { amount: 72600, currency: 'pkr' },
+        }),
+      );
+
+      expect(ordersRepository.update).not.toHaveBeenCalled();
     });
 
     it('sends the confirmation email when the order becomes paid', async () => {
@@ -430,6 +467,99 @@ describe('OrdersService', () => {
       expect(warn).toHaveBeenCalledWith(
         'evt_1 checkout.session.completed → no order for session cs_test_1',
       );
+    });
+  });
+
+  describe('markShipped', () => {
+    const SENT_AT = new Date('2026-11-25T09:05:00Z');
+    const unshipped = {
+      id: 'order-uuid',
+      orderNumber: 1011,
+      status: OrderStatus.Paid,
+      shippedAt: null,
+      shippingEmailSentAt: null,
+    };
+
+    beforeEach(() => {
+      jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+      orderEmailsService.sendShipped.mockResolvedValue(SENT_AT);
+    });
+
+    it('looks up paid orders only and 404s otherwise', async () => {
+      ordersRepository.findOneBy.mockResolvedValue(null);
+
+      await expect(service.markShipped('order-uuid')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(ordersRepository.findOneBy).toHaveBeenCalledWith({
+        id: 'order-uuid',
+        status: OrderStatus.Paid,
+      });
+      expect(ordersRepository.update).not.toHaveBeenCalled();
+      expect(orderEmailsService.sendShipped).not.toHaveBeenCalled();
+    });
+
+    it('sets shipped_at once (paid and not yet shipped) and emails', async () => {
+      ordersRepository.findOneBy.mockResolvedValue(unshipped);
+
+      const result = await service.markShipped('order-uuid');
+
+      const [where, values] = ordersRepository.update.mock.calls[0] as [
+        object,
+        { shippedAt: Date },
+      ];
+      expect(where).toEqual({
+        id: 'order-uuid',
+        status: OrderStatus.Paid,
+        shippedAt: IsNull(),
+      });
+      expect(values.shippedAt).toBeInstanceOf(Date);
+      // Payment status is never part of the update.
+      expect(values).not.toHaveProperty('status');
+      expect(orderEmailsService.sendShipped).toHaveBeenCalledWith('order-uuid');
+      expect(result).toEqual({
+        shippedAt: values.shippedAt,
+        shippingEmailSentAt: SENT_AT,
+        emailSent: true,
+      });
+    });
+
+    it('keeps the first shipping date and only resends the email', async () => {
+      const shippedAt = new Date('2026-11-24T08:00:00Z');
+      ordersRepository.findOneBy.mockResolvedValue({ ...unshipped, shippedAt });
+
+      const result = await service.markShipped('order-uuid');
+
+      expect(ordersRepository.update).not.toHaveBeenCalled();
+      expect(orderEmailsService.sendShipped).toHaveBeenCalledTimes(1);
+      expect(result.shippedAt).toBe(shippedAt);
+    });
+
+    it('uses the saved date when a parallel click shipped it first', async () => {
+      const shippedAt = new Date('2026-11-24T08:00:00Z');
+      ordersRepository.findOneBy
+        .mockResolvedValueOnce(unshipped)
+        .mockResolvedValueOnce({ ...unshipped, shippedAt });
+      ordersRepository.update.mockResolvedValue({ affected: 0 });
+
+      const result = await service.markShipped('order-uuid');
+
+      expect(result.shippedAt).toBe(shippedAt);
+    });
+
+    it('stays shipped and reports emailSent false when the email fails', async () => {
+      const earlier = new Date('2026-11-24T08:01:00Z');
+      ordersRepository.findOneBy.mockResolvedValue({
+        ...unshipped,
+        shippedAt: new Date('2026-11-24T08:00:00Z'),
+        shippingEmailSentAt: earlier,
+      });
+      orderEmailsService.sendShipped.mockResolvedValue(null);
+
+      const result = await service.markShipped('order-uuid');
+
+      expect(result.emailSent).toBe(false);
+      expect(result.shippingEmailSentAt).toBe(earlier);
     });
   });
 

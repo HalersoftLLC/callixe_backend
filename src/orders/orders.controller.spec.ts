@@ -26,6 +26,8 @@ const order = {
   shipping: 0,
   total: 32670,
   currency: 'usd',
+  presentmentAmount: null,
+  presentmentCurrency: null,
   status: OrderStatus.Pending,
   stripePaymentIntentId: 'pi_secret_internal',
   stripeCheckoutSessionId: 'cs_secret_internal',
@@ -115,10 +117,26 @@ describe('Orders controllers', () => {
       shipping: 0,
       total: 32670,
       currency: 'usd',
+      presentment: null,
     });
     expect(JSON.stringify(response)).not.toContain('pi_secret_internal');
     expect(JSON.stringify(response)).not.toContain('cs_secret_internal');
     expect(JSON.stringify(response)).not.toContain('+92');
+  });
+
+  it('GET /orders/:id includes what the customer paid locally', async () => {
+    ordersService.findById.mockResolvedValue({
+      ...order,
+      status: OrderStatus.Paid,
+      presentmentAmount: 9050000,
+      presentmentCurrency: 'pkr',
+    });
+
+    const response = await ordersController.findOne(order.id);
+
+    expect(response.presentment).toEqual({ amount: 9050000, currency: 'pkr' });
+    expect(response.total).toBe(32670);
+    expect(response.currency).toBe('usd');
   });
 
   it('GET /orders/:id passes NotFoundException through', async () => {

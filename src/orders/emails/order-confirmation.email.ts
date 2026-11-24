@@ -13,7 +13,7 @@ export interface OrderConfirmationOptions {
 }
 
 // Storefront colors (e-commerce-store src/constants/colors.js).
-const COLORS = {
+export const COLORS = {
   header: '#ece8de',
   ink: '#2d3440',
   card: '#e4ddd2',
@@ -26,9 +26,10 @@ const COLORS = {
 
 // Email clients can't load the storefront's web fonts, so use fallbacks
 // that exist everywhere.
-const SERIF =
+export const SERIF =
   "Baskerville, 'Libre Baskerville', Georgia, 'Times New Roman', serif";
-const SANS = "Montserrat, 'Helvetica Neue', Helvetica, Arial, sans-serif";
+export const SANS =
+  "Montserrat, 'Helvetica Neue', Helvetica, Arial, sans-serif";
 
 // Builds the order confirmation as one HTML page (table layout + inline
 // CSS, which is what Gmail and Outlook render reliably) and a plain-text
@@ -85,6 +86,7 @@ function renderHtml(
           COLORS.discount,
         )
       : '';
+  const paidLocally = paidLocallyText(order);
 
   const shipping = order.shipping > 0 ? money(order.shipping) : 'Free';
   const address = addressLines(order).map(e).join('<br>');
@@ -158,6 +160,7 @@ function renderHtml(
                   <td style="padding:14px 0 0;border-top:2px solid ${COLORS.ink};font-family:${SANS};font-size:16px;font-weight:bold;color:${COLORS.ink};">Total</td>
                   <td align="right" style="padding:14px 0 0;border-top:2px solid ${COLORS.ink};font-family:${SANS};font-size:16px;font-weight:bold;color:${COLORS.ink};white-space:nowrap;">${money(order.total)}</td>
                 </tr>
+                ${paidLocally ? summaryRow('Paid in your currency', e(paidLocally), COLORS.muted) : ''}
               </table>
             </td>
           </tr>
@@ -200,7 +203,11 @@ function renderHtml(
 </html>`;
 }
 
-function summaryRow(label: string, value: string, color = COLORS.ink): string {
+export function summaryRow(
+  label: string,
+  value: string,
+  color = COLORS.ink,
+): string {
   return `<tr>
                   <td style="padding:6px 0;font-family:${SANS};font-size:14px;color:${color};">${label}</td>
                   <td align="right" style="padding:6px 0;font-family:${SANS};font-size:14px;color:${color};white-space:nowrap;">${value}</td>
@@ -229,6 +236,12 @@ function renderText(order: Order, ctx: RenderContext): string {
   lines.push(
     `Shipping: ${order.shipping > 0 ? money(order.shipping) : 'Free'}`,
     `Total: ${money(order.total)}`,
+  );
+  const paidLocally = paidLocallyText(order);
+  if (paidLocally) {
+    lines.push(`Paid in your currency: ${paidLocally}`);
+  }
+  lines.push(
     '',
     'DELIVERY ADDRESS',
     ...addressLines(order),
@@ -241,7 +254,7 @@ function renderText(order: Order, ctx: RenderContext): string {
   return lines.join('\n');
 }
 
-function addressLines(order: Order): string[] {
+export function addressLines(order: Order): string[] {
   return [
     `${order.firstName} ${order.lastName}`,
     order.address,
@@ -252,13 +265,40 @@ function addressLines(order: Order): string[] {
   ].filter((line): line is string => Boolean(line));
 }
 
-// Amounts are stored in cents; dividing here is for display only.
-function moneyFormatter(currency: string): (cents: number) => string {
+// Stripe amounts are in the currency's smallest unit. Most currencies have
+// 2 decimals; these differ (https://docs.stripe.com/currencies). ISK and UGX
+// are sent with 2 decimals by Stripe, so they are not listed. Check the docs
+// page if a new currency shows a wrong amount (display only).
+const ZERO_DECIMAL_CURRENCIES = new Set([
+  'BIF', 'CLP', 'DJF', 'GNF', 'JPY', 'KMF', 'KRW', 'MGA',
+  'PYG', 'RWF', 'VND', 'VUV', 'XAF', 'XOF', 'XPF',
+]); // prettier-ignore
+const THREE_DECIMAL_CURRENCIES = new Set(['BHD', 'JOD', 'KWD', 'OMR', 'TND']);
+
+function minorUnitDivisor(code: string): number {
+  if (ZERO_DECIMAL_CURRENCIES.has(code)) return 1;
+  if (THREE_DECIMAL_CURRENCIES.has(code)) return 1000;
+  return 100;
+}
+
+// Amounts are stored in the smallest unit; dividing here is for display only.
+export function moneyFormatter(currency: string): (amount: number) => string {
+  const code = currency.toUpperCase();
   const format = new Intl.NumberFormat('en-US', {
     style: 'currency',
-    currency: currency.toUpperCase(),
+    currency: code,
   });
-  return (cents) => format.format(cents / 100);
+  const divisor = minorUnitDivisor(code);
+  return (amount) => format.format(amount / divisor);
+}
+
+// "Paid PKR 101,234.00" line, only when Stripe converted the payment
+// (Adaptive Pricing); null otherwise.
+export function paidLocallyText(order: Order): string | null {
+  if (order.presentmentAmount === null || !order.presentmentCurrency) {
+    return null;
+  }
+  return moneyFormatter(order.presentmentCurrency)(order.presentmentAmount);
 }
 
 function formatDate(date: Date): string {

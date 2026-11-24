@@ -21,7 +21,7 @@ Keep the backend as small as this flow needs. Do not invent features.
 
 **Admin panel (in scope):** a single admin (credentials from env, no admin users table, no roles) manages products and images and views paid orders and customers. Scope and phases: [docs/admin-plan.md](docs/admin-plan.md).
 
-**Out of scope unless I ask for it:** customer accounts or customer login, admin roles or multiple admins, server-side carts, inventory/stock, categories, tax, refunds, fulfillment/shipping status, multiple shipping methods, PayPal as a separate integration.
+**Out of scope unless I ask for it:** customer accounts or customer login, admin roles or multiple admins, server-side carts, inventory/stock, categories, tax, refunds, fulfillment beyond the admin's "Mark as shipped" (no tracking numbers, couriers, out-for-delivery or delivered steps), multiple shipping methods, PayPal as a separate integration.
 
 ## Technology Stack
 
@@ -91,7 +91,7 @@ src/
 ├── orders/
 │   ├── dto/                    # create-order, validate-discount, responses
 │   ├── entities/               # order, order-item, discount-code
-│   ├── emails/                 # order-confirmation.email.ts: pure HTML + text builder
+│   ├── emails/                 # order-confirmation / order-shipped .email.ts: pure HTML + text builders
 │   ├── orders.module.ts        # imports ProductsModule, EmailModule; exports OrdersService, OrderReportsService
 │   ├── orders.controller.ts    # POST /orders, GET /orders/:id
 │   ├── discounts.controller.ts # POST /discounts/validate
@@ -122,7 +122,7 @@ src/
 │   ├── admin-shop-hero.controller.ts # /admin/shop-hero
 │   ├── admin-featured-cards.controller.ts # /admin/featured-cards
 │   ├── image-upload.options.ts # shared multer limits (5 MB, one file) for admin uploads
-│   ├── admin-orders.controller.ts    # /admin/orders (paid only, read-only)
+│   ├── admin-orders.controller.ts    # /admin/orders (paid only; read-only except POST :id/ship)
 │   ├── admin-customers.controller.ts # /admin/customers
 │   ├── admin-dashboard.controller.ts # /admin/dashboard
 │   ├── admin-dashboard.service.ts    # combines ProductsService + OrderReportsService figures
@@ -147,6 +147,7 @@ Email rules:
 - Never log the API key, email bodies or customer email addresses; log the order number and Brevo's message id or error code.
 - Stripe's own `receipt_email` is kept, so a paying customer gets both emails.
 - `ORDER_NOTIFY_EMAIL` (optional) gets a hidden copy (BCC) of every confirmation: the same email, in the same send. Skipped when it equals the customer's email. If the send fails, neither copy arrives.
+- **Shipping email** ("Your order #N is on its way"): sent by the admin's Mark as shipped / Resend (`POST /admin/orders/:id/ship`). Unlike the confirmation it is **awaited**, because the admin waits to see whether it went out: `sendShipped` returns the sent time or `null` (never throws), and `shipping_email_sent_at` is set only after a successful send. No link to the order page, no tracking details. Same BCC rule.
 - **Database:** TypeORM data source and migrations (schema and seed data). Each feature module registers its own entities with `TypeOrmModule.forFeature([...])`.
 
 Only create files and folders when they are actually needed.
@@ -161,7 +162,7 @@ The frontend depends on these endpoints. Do not change their shape without telli
 | GET | `/products/:slug` | One active product (same shape), 404 if not found |
 | POST | `/discounts/validate` | Body `{ code }` → 200 `{ code, type, value }` or 400. 10/min per IP |
 | POST | `/orders` | Create pending order, returns `{ orderId, orderNumber, total, checkoutUrl }`; the frontend redirects to `checkoutUrl` (Stripe-hosted page). 8/min per IP |
-| GET | `/orders/:id` | Order for the confirmation page (UUID v4, 400 if malformed, 404 if missing) |
+| GET | `/orders/:id` | Order for the confirmation page (UUID v4, 400 if malformed, 404 if missing). Includes `presentment: { amount, currency } \| null` (what the customer paid in their own currency, display only) |
 | POST | `/payments/webhook` | Stripe webhook only |
 | GET | `/featured-cards` | The two Shop page product cards: `[{ slot, slug, imagePosition, promo }]`, only cards with an active product. The storefront takes name/prices/image from `GET /products` by slug |
 | GET | `/shop-hero` | Shop page hero: `{ eyebrow, title, image: { url, alt } \| null }`; `null` image = storefront uses its own. 404 if the row is missing |
@@ -187,13 +188,14 @@ Admin endpoints (used only by the admin app). Every route except login requires 
 | GET | `/admin/featured-cards` | Both cards: `[{ slot, imagePosition, promo, product: <admin product view> \| null, updatedAt }]` |
 | PATCH | `/admin/featured-cards/:slot` | Slot 1 or 2. `{ productSlug?: slug, imagePosition?: 'left' \| 'right', promo?: string \| null }` (`productSlug` can't be `null`: both cards always show) (promo 1–30, blank/`null` removes it). Unknown product 404, inactive 400, product already in the other card 409. Product details are saved with `PATCH /admin/products/:slug` (the admin app calls it first) |
 
-| GET | `/admin/orders` | `?email=&orderNumber=&from=&to=&sort=&page=&limit=` (dates `YYYY-MM-DD`, UTC, `to` inclusive) → paid orders page |
-| GET | `/admin/orders/:id` | One **paid** order (UUID v4); pending/failed → 404 |
+| GET | `/admin/orders` | `?email=&orderNumber=&shipped=&from=&to=&sort=&page=&limit=` (dates `YYYY-MM-DD`, UTC, `to` inclusive; `shipped` = `true`/`false`) → paid orders page, each with `shippedAt` |
+| GET | `/admin/orders/:id` | One **paid** order (UUID v4); pending/failed → 404. Includes `fulfillment: { shippedAt, emailSentAt }` (`shipping` stays the shipping price) and `presentment` (also on each `/admin/orders` item) |
+| POST | `/admin/orders/:id/ship` | No body. Paid orders only (else 404). Sets `shippedAt` the first time (never changes it after), then emails the customer; on a shipped order it only resends the email → `{ shippedAt, shippingEmailSentAt, emailSent }`. A failed email still leaves the order shipped (`emailSent: false`) |
 | GET | `/admin/customers` | `?search=&sort=&page=&limit=` → customers = paid orders grouped by `lower(email)` |
 | GET | `/admin/customers/detail` | `?email=&page=&limit=` → summary, latest contact details, paid orders; 404 if none |
 | GET | `/admin/dashboard` | Product counts, paid orders, customers, revenue, average order, recent orders, top products |
 
-Reports (`OrderReportsService`) are read-only and see **paid orders only**. All counting/summing is done in SQL with bound parameters; sort columns come from fixed maps; bigint results go through `toSafeInteger` (never a silently wrong number). Order status still changes only through the Stripe webhook.
+Reports (`OrderReportsService`) are read-only and see **paid orders only**. All counting/summing is done in SQL with bound parameters; sort columns come from fixed maps; bigint results go through `toSafeInteger` (never a silently wrong number). Payment status still changes only through the Stripe webhook; the admin can only set `shipped_at` (`OrdersService.markShipped`).
 
 Image rules (`ProductImagesService`): write the new file → change the DB in a transaction that locks the product row → on DB failure delete the new file → only after commit delete the old file. Failed deletes are logged, never thrown. The first image is always main; exactly one main image while any exist (partial unique index); positions stay 0, 1, 2, …
 
@@ -267,6 +269,19 @@ When you implement Stripe code, say which doc pages you followed.
 - `checkout.session.async_payment_failed` and `checkout.session.expired` mark a `pending` order `failed`. A `paid` order is never changed by a later event (events can arrive out of order).
 - Never hardcode Stripe keys. Use test keys (`sk_test_...`) in development.
 
+## 6.3 Local currencies (Stripe Adaptive Pricing)
+
+Docs: https://docs.stripe.com/payments/currencies/localize-prices/adaptive-pricing and the `presentment_details` field of https://docs.stripe.com/api/checkout/sessions/object
+
+- **One price currency.** Products, orders, totals, discounts and reports are all in `CURRENCY` (usd). Never store a price per currency and never sum different currencies.
+- Customers pay in their own currency through **Adaptive Pricing**, switched on in the Stripe Dashboard (test and live mode separately), not in code. Sessions are still created in `CURRENCY`; Stripe converts on its page (rate guaranteed 24 h, customer pays the 2–4 % conversion fee, refunds go back at the original rate).
+- Stripe keeps the session's `amount_total` / `currency` in `CURRENCY`, so the webhook amount check is unchanged. The customer's amount is in `presentment_details` (`presentment_amount`, `presentment_currency`), saved on the order with the paid status (`presentment_amount`, `presentment_currency`) **for display only** (confirmation page, email, admin). Never use it for pricing, checks or reports. Missing, malformed or same-currency details are stored as null.
+- Presentment amounts use that currency's smallest unit (zero-decimal and three-decimal lists in `order-confirmation.email.ts`, storefront `formatPrice.js`, admin `format.js`).
+- The storefront shows converted prices (no `≈` sign) from its own rate API; the cart and checkout notes say they are estimates and that Stripe's page shows the final amount.
+- Admin prices are entered in USD; the forms warn above $5,000 (a local amount typed by mistake).
+- Test locally with a `+location_XX` customer email (e.g. `test+location_PK@example.com`).
+- Fixed prices per currency (Stripe manual currency prices) are out of scope unless I ask: they need per-currency prices, Price objects and multi-currency reports.
+
 # 7. Data Model
 
 Keep it minimal. The backend stores only what checkout and payment need.
@@ -276,7 +291,7 @@ Keep it minimal. The backend stores only what checkout and payment need.
 - **ShopHero:** exactly one row (`id = 1`, `CHK_shop_hero_single_row`): eyebrow, title, imageStorageKey + imageContentType (nullable, set and cleared together; never returned), imageAlt (nullable, falls back to title), updatedAt. Seeded by the `CreateShopHero` migration with the current storefront text and no image.
 - **FeaturedCard:** exactly two rows (`slot` 1 and 2, `CHK_featured_cards_slot`): productId (nullable FK to products, `ON DELETE SET NULL`, unique so one product can't fill both cards). Both cards always show: the API can't set it to null; it is only null if the product was removed from the database, until the admin picks another one, imagePosition (`left` | `right`), promo (nullable, ≤ 30), updatedAt. A card only chooses a product and how to show it; name, prices, description, badge and image always come from that product. Seeded by the `CreateFeaturedCards` migration with the two cards the Shop page showed before.
 - **DiscountCode:** code (unique, uppercase), type (`percent` | `fixed`), value, active.
-- **Order:** id (UUID, used in URLs), orderNumber (short, from 1001, for display and emails), email, delivery fields (firstName, lastName, address, apartment, city, postalCode, country, phone), subtotal, discountCode, discountAmount, shipping, total, currency, status (`pending` | `paid` | `failed`), stripeCheckoutSessionId (unique, nullable; set when the Checkout Session is created), stripePaymentIntentId (unique, nullable; set when the order is paid), createdAt, updatedAt. A database check enforces `total = subtotal - discount_amount + shipping`.
+- **Order:** id (UUID, used in URLs), orderNumber (short, from 1001, for display and emails), email, delivery fields (firstName, lastName, address, apartment, city, postalCode, country, phone), subtotal, discountCode, discountAmount, shipping, total, currency, presentmentAmount + presentmentCurrency (nullable, set together by the webhook with `paid`; what the customer paid in their own currency, display only, `CHK_orders_presentment`), status (`pending` | `paid` | `failed`), stripeCheckoutSessionId (unique, nullable; set when the Checkout Session is created), stripePaymentIntentId (unique, nullable; set when the order is paid), shippedAt (nullable; set once by the admin's Mark as shipped; null = unfulfilled), shippingEmailSentAt (nullable; last successful "on its way" email), createdAt, updatedAt. A database check enforces `total = subtotal - discount_amount + shipping`.
 - **OrderItem:** orderId, slug, name, unitPrice, quantity, lineTotal (copied at order time so later price changes do not alter past orders). No image column.
 
 **Display content is split.** The backend owns what the admin manages: `description`, `badge`, product images (`product_images` table), the Shop page hero (`shop_hero` table) and the two featured product cards with their `promo` and image side (`featured_cards` table). The frontend keeps the rest in `src/data/dummyData.js` (and uses its old `promo`/`featured`/`imagePosition` values only as a fallback when the backend can't be reached), matched by `slug`, and falls back to its own `image`/`alt`/`description`/`badge` while the backend value is null. Do not add other display fields to backend tables without my permission. The frontend fetches `GET /products` for name and prices and merges them by slug, so the price shown always equals the price charged.
