@@ -176,6 +176,15 @@ export class EnvironmentVariables {
   @IsEmail()
   EMAIL_REPLY_TO?: string;
 
+  // Store owner's inbox: gets a hidden copy (BCC) of every order
+  // confirmation. Blank = no copy.
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' && value.trim() === '' ? undefined : value,
+  )
+  @IsOptional()
+  @IsEmail()
+  ORDER_NOTIFY_EMAIL?: string;
+
   @IsEnum(StorageDriver)
   STORAGE_DRIVER: StorageDriver = StorageDriver.Local;
 

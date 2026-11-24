@@ -146,6 +146,7 @@ Email rules:
 - Every customer value put into email HTML goes through `escapeHtml`. Emails use table layout + inline CSS (email clients), plus a plain-text copy.
 - Never log the API key, email bodies or customer email addresses; log the order number and Brevo's message id or error code.
 - Stripe's own `receipt_email` is kept, so a paying customer gets both emails.
+- `ORDER_NOTIFY_EMAIL` (optional) gets a hidden copy (BCC) of every confirmation: the same email, in the same send. Skipped when it equals the customer's email. If the send fails, neither copy arrives.
 - **Database:** TypeORM data source and migrations (schema and seed data). Each feature module registers its own entities with `TypeOrmModule.forFeature([...])`.
 
 Only create files and folders when they are actually needed.
@@ -407,6 +408,7 @@ BREVO_API_KEY=          # Brevo API key (xkeysib-...)
 EMAIL_FROM=             # sender verified in Brevo, e.g. orders@callixe.co
 EMAIL_FROM_NAME=        # e.g. Callixe (max 70 characters)
 EMAIL_REPLY_TO=         # optional; blank = replies go to EMAIL_FROM
+ORDER_NOTIFY_EMAIL=     # optional; store owner's inbox, gets a BCC of every order confirmation
 STORAGE_DRIVER=local | spaces
 STORAGE_PUBLIC_URL=     # local: http://localhost:3000/uploads; spaces: the CDN URL. No trailing slash
 SPACES_ENDPOINT=        # only when STORAGE_DRIVER=spaces

@@ -6,9 +6,10 @@ import { EmailService } from '../email/email.service';
 import { Order } from './entities/order.entity';
 import { OrderEmailsService } from './order-emails.service';
 
-const ENV: Record<string, string> = {
+const ENV: Record<string, string | undefined> = {
   FRONTEND_URL: 'https://callixe.co',
   EMAIL_FROM_NAME: 'Callixe',
+  ORDER_NOTIFY_EMAIL: undefined,
 };
 
 const PAID_ORDER = {
@@ -49,9 +50,11 @@ describe('OrderEmailsService', () => {
   let log: jest.SpyInstance;
   let warn: jest.SpyInstance;
   let error: jest.SpyInstance;
+  let env: Record<string, string | undefined>;
 
   beforeEach(async () => {
     jest.resetAllMocks();
+    env = { ...ENV };
     log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
     warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
     error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
@@ -65,7 +68,7 @@ describe('OrderEmailsService', () => {
         { provide: EmailService, useValue: emailService },
         {
           provide: ConfigService,
-          useValue: { get: (key: string) => ENV[key] },
+          useValue: { get: (key: string) => env[key] },
         },
       ],
     }).compile();
@@ -98,6 +101,35 @@ describe('OrderEmailsService', () => {
     expect(log).toHaveBeenCalledWith(
       'Confirmation email sent for order #1001 (<m1@brevo>)',
     );
+  });
+
+  describe('owner copy (ORDER_NOTIFY_EMAIL)', () => {
+    function sentBcc(): unknown {
+      const [message] = emailService.send.mock.calls[0] as [{ bcc: unknown }];
+      return message.bcc;
+    }
+
+    it('sends no copy when it is not set', async () => {
+      await service.sendConfirmation('order-uuid');
+
+      expect(sentBcc()).toEqual([]);
+    });
+
+    it('BCCs the store owner when it is set', async () => {
+      env.ORDER_NOTIFY_EMAIL = 'owner@example.com';
+
+      await service.sendConfirmation('order-uuid');
+
+      expect(sentBcc()).toEqual(['owner@example.com']);
+    });
+
+    it('skips the copy when the owner is the customer', async () => {
+      env.ORDER_NOTIFY_EMAIL = 'Customer@Example.com';
+
+      await service.sendConfirmation('order-uuid');
+
+      expect(sentBcc()).toEqual([]);
+    });
   });
 
   it('never throws when Brevo fails, and logs without the customer email', async () => {

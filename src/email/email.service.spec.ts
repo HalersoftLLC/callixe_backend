@@ -83,6 +83,16 @@ describe('EmailService', () => {
     });
   });
 
+  it('adds hidden copies (bcc) only when given', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(201, { messageId: '<m1@brevo>' }),
+    );
+
+    await service.send({ ...MESSAGE, bcc: ['owner@example.com'] });
+
+    expect(sentRequest().body.bcc).toEqual([{ email: 'owner@example.com' }]);
+  });
+
   it('adds replyTo only when EMAIL_REPLY_TO is set', async () => {
     env.EMAIL_REPLY_TO = 'help@callixe.co';
     fetchMock.mockResolvedValue(jsonResponse(201, { messageId: '<m1@brevo>' }));

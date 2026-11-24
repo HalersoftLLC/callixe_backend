@@ -13,6 +13,8 @@ const MAX_NAME_LENGTH = 70;
 
 export interface EmailMessage {
   to: { email: string; name?: string };
+  // Hidden copies: the recipient can't see these addresses.
+  bcc?: string[];
   subject: string;
   html: string;
   // Plain-text version: shown by text-only clients and helps spam scoring.
@@ -46,6 +48,9 @@ export class EmailService {
           name: this.config.get('EMAIL_FROM_NAME', { infer: true }),
         },
         to: [{ email: message.to.email, ...(name ? { name } : {}) }],
+        ...(message.bcc?.length
+          ? { bcc: message.bcc.map((email) => ({ email })) }
+          : {}),
         ...(replyTo ? { replyTo: { email: replyTo } } : {}),
         subject: message.subject,
         htmlContent: message.html,

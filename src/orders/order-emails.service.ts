@@ -44,6 +44,7 @@ export class OrderEmailsService {
           email: order.email,
           name: `${order.firstName} ${order.lastName}`,
         },
+        bcc: this.ownerCopy(order.email),
         ...email,
         tags: ['order-confirmation'],
       });
@@ -56,5 +57,16 @@ export class OrderEmailsService {
         `Confirmation email failed for order ${orderId}: ${(err as Error).message}`,
       );
     }
+  }
+
+  // The store owner gets a hidden copy of every confirmation. Skipped when
+  // the owner is the customer (test orders), so the same inbox isn't
+  // listed twice in one email.
+  private ownerCopy(customerEmail: string): string[] {
+    const owner = this.config.get('ORDER_NOTIFY_EMAIL', { infer: true });
+    if (!owner || owner.toLowerCase() === customerEmail.toLowerCase()) {
+      return [];
+    }
+    return [owner];
   }
 }
