@@ -154,6 +154,28 @@ export class EnvironmentVariables {
   @Max(5)
   TRUST_PROXY_HOPS: number = 0;
 
+  // Brevo transactional email (order confirmation).
+  @IsString()
+  @IsNotEmpty()
+  BREVO_API_KEY!: string;
+
+  // Must be a sender verified in Brevo (Senders, Domains & Dedicated IPs).
+  @IsEmail()
+  EMAIL_FROM!: string;
+
+  // Brevo limits sender names to 70 characters.
+  @IsString()
+  @Length(1, 70)
+  EMAIL_FROM_NAME!: string;
+
+  // Where customer replies go. Blank = replies go to EMAIL_FROM.
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' && value.trim() === '' ? undefined : value,
+  )
+  @IsOptional()
+  @IsEmail()
+  EMAIL_REPLY_TO?: string;
+
   @IsEnum(StorageDriver)
   STORAGE_DRIVER: StorageDriver = StorageDriver.Local;
 

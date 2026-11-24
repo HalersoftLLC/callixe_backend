@@ -33,7 +33,10 @@ describe('requestLogger', () => {
   });
 
   it('never logs the query string (it can hold customer emails)', () => {
-    const [line] = run('/admin/orders?email=customer%40example.com&page=2', 404);
+    const [line] = run(
+      '/admin/orders?email=customer%40example.com&page=2',
+      404,
+    );
 
     expect(line).toContain('GET /admin/orders 404');
     expect(line).not.toContain('email');

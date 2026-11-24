@@ -5,10 +5,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import {
-  escapeLikePattern,
-  type Page,
-} from '../products/products.service';
+import { escapeLikePattern, type Page } from '../products/products.service';
 import { Order, OrderStatus } from './entities/order.entity';
 
 // Read-only reports for the admin panel. Kept apart from OrdersService, which
@@ -424,7 +421,11 @@ export class OrderReportsService {
          LIMIT $2`,
         [OrderStatus.Paid, TOP_PRODUCTS],
       ),
-      this.listPaidOrders({ sort: '-createdAt', page: 1, limit: RECENT_ORDERS }),
+      this.listPaidOrders({
+        sort: '-createdAt',
+        page: 1,
+        limit: RECENT_ORDERS,
+      }),
     ]);
 
     const stats = statsRows[0];
@@ -436,7 +437,8 @@ export class OrderReportsService {
       customers: toSafeInteger(stats.customers),
       revenue,
       revenueLast30Days: toSafeInteger(stats.revenue_30d),
-      averageOrderValue: paidOrders === 0 ? 0 : Math.round(revenue / paidOrders),
+      averageOrderValue:
+        paidOrders === 0 ? 0 : Math.round(revenue / paidOrders),
       recentOrders: recent.items,
       topProducts: topRows.map((row) => ({
         slug: row.slug,
@@ -459,7 +461,9 @@ export function toSafeInteger(value: string | number): number {
         ? NaN
         : Number(value);
   if (!Number.isSafeInteger(number)) {
-    throw new Error(`Expected a safe integer from the database, got "${value}"`);
+    throw new Error(
+      `Expected a safe integer from the database, got "${value}"`,
+    );
   }
   return number;
 }

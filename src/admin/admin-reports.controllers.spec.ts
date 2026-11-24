@@ -164,7 +164,9 @@ describe('report query DTOs', () => {
     ['an unknown sort', { sort: 'email' }],
     ['an unknown parameter', { status: 'pending' }],
   ])('ListOrdersQueryDto rejects %s', (_case, query) => {
-    expect(validate(ListOrdersQueryDto, query).errors.length).toBeGreaterThan(0);
+    expect(validate(ListOrdersQueryDto, query).errors.length).toBeGreaterThan(
+      0,
+    );
   });
 
   it('ListCustomersQueryDto defaults to most recent customers first', () => {
@@ -177,13 +179,15 @@ describe('report query DTOs', () => {
     ['an unknown sort', { sort: 'email' }],
     ['a 101-character search', { search: 'a'.repeat(101) }],
   ])('ListCustomersQueryDto rejects %s', (_case, query) => {
-    expect(validate(ListCustomersQueryDto, query).errors.length).toBeGreaterThan(
-      0,
-    );
+    expect(
+      validate(ListCustomersQueryDto, query).errors.length,
+    ).toBeGreaterThan(0);
   });
 
   it('CustomerDetailQueryDto requires a valid email', () => {
-    expect(validate(CustomerDetailQueryDto, {}).errors.length).toBeGreaterThan(0);
+    expect(validate(CustomerDetailQueryDto, {}).errors.length).toBeGreaterThan(
+      0,
+    );
     expect(
       validate(CustomerDetailQueryDto, { email: 'x' }).errors.length,
     ).toBeGreaterThan(0);

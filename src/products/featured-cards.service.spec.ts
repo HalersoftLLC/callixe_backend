@@ -227,7 +227,9 @@ describe('FeaturedCardsService', () => {
     });
 
     it('rejects an inactive product (400)', async () => {
-      manager.findOneBy.mockResolvedValue(makeProduct({ id: 3, active: false }));
+      manager.findOneBy.mockResolvedValue(
+        makeProduct({ id: 3, active: false }),
+      );
 
       await expect(
         service.updateCard(1, { productSlug: 'neck-pillow-2-0' }),

@@ -2,10 +2,7 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { Order, OrderStatus } from './entities/order.entity';
-import {
-  OrderReportsService,
-  toSafeInteger,
-} from './order-reports.service';
+import { OrderReportsService, toSafeInteger } from './order-reports.service';
 
 type QueryCall = [sql: string, params: unknown[]];
 
@@ -309,8 +306,10 @@ describe('OrderReportsService', () => {
   describe('findCustomer', () => {
     it('returns the summary, latest contact details and paid orders', async () => {
       repository.query.mockImplementation((sql: string) => {
-        if (sql.includes('t.key = lower($2)')) return Promise.resolve([customerRow]);
-        if (sql.includes('COUNT(*) AS count')) return Promise.resolve([{ count: '1' }]);
+        if (sql.includes('t.key = lower($2)'))
+          return Promise.resolve([customerRow]);
+        if (sql.includes('COUNT(*) AS count'))
+          return Promise.resolve([{ count: '1' }]);
         return Promise.resolve([orderRow]);
       });
 
@@ -365,7 +364,8 @@ describe('OrderReportsService', () => {
             },
           ]);
         }
-        if (sql.includes('COUNT(*) AS count')) return Promise.resolve([{ count: '1' }]);
+        if (sql.includes('COUNT(*) AS count'))
+          return Promise.resolve([{ count: '1' }]);
         return Promise.resolve([orderRow]);
       });
 
@@ -406,7 +406,8 @@ describe('OrderReportsService', () => {
             },
           ]);
         }
-        if (sql.includes('COUNT(*) AS count')) return Promise.resolve([{ count: '0' }]);
+        if (sql.includes('COUNT(*) AS count'))
+          return Promise.resolve([{ count: '0' }]);
         return Promise.resolve([]);
       });
 

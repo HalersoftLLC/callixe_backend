@@ -15,6 +15,7 @@ import { CreateOrderDto } from './dto/create-order.dto';
 import { DiscountCode, DiscountType } from './entities/discount-code.entity';
 import { OrderItem } from './entities/order-item.entity';
 import { Order, OrderStatus } from './entities/order.entity';
+import { OrderEmailsService } from './order-emails.service';
 import { OrdersService } from './orders.service';
 
 const CHECKOUT_URL = 'https://checkout.stripe.com/c/pay/cs_test_1';
@@ -60,6 +61,7 @@ describe('OrdersService', () => {
   const discountCodesRepository = { findOneBy: jest.fn() };
   const productsService = { findActiveBySlugs: jest.fn() };
   const paymentsService = { createCheckoutSession: jest.fn() };
+  const orderEmailsService = { sendConfirmation: jest.fn() };
   const config = { get: jest.fn() };
 
   // Fake transaction manager: records what would be written.
@@ -92,6 +94,7 @@ describe('OrdersService', () => {
       url: CHECKOUT_URL,
     });
     ordersRepository.update.mockResolvedValue({ affected: 1 });
+    orderEmailsService.sendConfirmation.mockResolvedValue(undefined);
 
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -103,6 +106,7 @@ describe('OrdersService', () => {
         },
         { provide: ProductsService, useValue: productsService },
         { provide: PaymentsService, useValue: paymentsService },
+        { provide: OrderEmailsService, useValue: orderEmailsService },
         { provide: DataSource, useValue: dataSource },
         { provide: ConfigService, useValue: config },
       ],
@@ -336,6 +340,26 @@ describe('OrdersService', () => {
       );
     });
 
+    it('sends the confirmation email when the order becomes paid', async () => {
+      await service.applyPaymentOutcome(makeOutcome());
+
+      expect(orderEmailsService.sendConfirmation).toHaveBeenCalledTimes(1);
+      expect(orderEmailsService.sendConfirmation).toHaveBeenCalledWith(
+        'order-uuid',
+      );
+    });
+
+    it('does not wait for the email before answering the webhook', async () => {
+      // An email that never finishes must not hold up the Stripe response.
+      orderEmailsService.sendConfirmation.mockReturnValue(
+        new Promise(() => {}),
+      );
+
+      await expect(
+        service.applyPaymentOutcome(makeOutcome()),
+      ).resolves.toBeUndefined();
+    });
+
     it('treats a duplicate paid event as a no-op', async () => {
       ordersRepository.update.mockResolvedValue({ affected: 0 });
 
@@ -345,6 +369,19 @@ describe('OrdersService', () => {
       expect(log).toHaveBeenCalledWith(
         'evt_1 checkout.session.completed → order #1001 already paid (duplicate)',
       );
+      expect(orderEmailsService.sendConfirmation).not.toHaveBeenCalled();
+    });
+
+    it('sends no email for a failed or expired payment', async () => {
+      await service.applyPaymentOutcome(
+        makeOutcome({
+          eventType: 'checkout.session.expired',
+          result: 'failed',
+          paymentIntentId: null,
+        }),
+      );
+
+      expect(orderEmailsService.sendConfirmation).not.toHaveBeenCalled();
     });
 
     it('fails only pending orders, so a paid order is never reverted', async () => {
@@ -376,6 +413,7 @@ describe('OrdersService', () => {
         await service.applyPaymentOutcome(makeOutcome(overrides));
 
         expect(ordersRepository.update).not.toHaveBeenCalled();
+        expect(orderEmailsService.sendConfirmation).not.toHaveBeenCalled();
         expect(error).toHaveBeenCalledWith(
           expect.stringContaining('mismatch for order #1001'),
         );

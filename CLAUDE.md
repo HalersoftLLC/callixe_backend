@@ -59,7 +59,7 @@ I want to control all terminal operations.
 
 # 3. Module Structure
 
-Four feature modules: Products, Orders, Payments, and Admin. Do not add more without my permission.
+Five feature modules: Products, Orders, Payments, Admin, and Email. Do not add more without my permission.
 
 ```
 src/
@@ -91,11 +91,13 @@ src/
 ├── orders/
 │   ├── dto/                    # create-order, validate-discount, responses
 │   ├── entities/               # order, order-item, discount-code
-│   ├── orders.module.ts        # imports ProductsModule; exports OrdersService, OrderReportsService
+│   ├── emails/                 # order-confirmation.email.ts: pure HTML + text builder
+│   ├── orders.module.ts        # imports ProductsModule, EmailModule; exports OrdersService, OrderReportsService
 │   ├── orders.controller.ts    # POST /orders, GET /orders/:id
 │   ├── discounts.controller.ts # POST /discounts/validate
 │   ├── orders.service.ts       # checkout + webhook (money-critical writes)
 │   ├── order-reports.service.ts # read-only paid-order/customer/dashboard queries for Admin
+│   ├── order-emails.service.ts # customer emails about an order (confirmation); never throws
 │   ├── orders.constants.ts     # shipping, limits, countries, rate limits
 │   ├── pricing.ts              # pure functions: subtotal, discount, total
 │   └── *.spec.ts
@@ -103,6 +105,10 @@ src/
 │   ├── payments.module.ts
 │   ├── payments.controller.ts  # POST /payments/webhook
 │   ├── payments.service.ts     # Stripe client wrapper: Checkout Sessions, webhook verification
+│   └── *.spec.ts
+├── email/
+│   ├── email.module.ts         # exports EmailService
+│   ├── email.service.ts        # Brevo API wrapper: send({ to, subject, html, text, tags })
 │   └── *.spec.ts
 ├── admin/
 │   ├── dto/                    # login, pagination, product create/update/list, slug param
@@ -131,6 +137,15 @@ Module responsibilities:
 - **Admin:** admin login and the admin HTTP routes. Holds no repositories and imports no other module's entities or DTOs: it calls exported services (`ProductsService`, later `OrdersService`) and uses the types those service files export.
 - **Orders:** create orders from checkout data, calculate totals, validate discount codes, return an order for the confirmation page.
 - **Payments:** create Stripe Checkout Sessions (hosted payment page) and handle the Stripe webhook that marks orders as paid or failed.
+- **Email:** sends transactional email through the Brevo API (`POST https://api.brevo.com/v3/smtp/email`, Node's built-in `fetch`, 10 s timeout). Knows nothing about orders; features build their own content.
+
+Email rules:
+
+- The order confirmation is sent only when the webhook **actually** changes an order to `paid` (`affected = 1`), so duplicate Stripe events never email twice. Failed/expired payments send nothing.
+- It is started without `await` (fire-and-forget) so Stripe gets its 2xx quickly. `OrderEmailsService` never throws: a Brevo failure is logged and the order stays paid. No retry and no "sent" column yet (Phase 2).
+- Every customer value put into email HTML goes through `escapeHtml`. Emails use table layout + inline CSS (email clients), plus a plain-text copy.
+- Never log the API key, email bodies or customer email addresses; log the order number and Brevo's message id or error code.
+- Stripe's own `receipt_email` is kept, so a paying customer gets both emails.
 - **Database:** TypeORM data source and migrations (schema and seed data). Each feature module registers its own entities with `TypeOrmModule.forFeature([...])`.
 
 Only create files and folders when they are actually needed.
@@ -388,6 +403,10 @@ ADMIN_URL=              # admin app origin, no trailing slash (CORS)
 ADMIN_EMAIL=
 ADMIN_PASSWORD_HASH=    # bcrypt hash, never the plain password
 JWT_SECRET=             # at least 32 characters
+BREVO_API_KEY=          # Brevo API key (xkeysib-...)
+EMAIL_FROM=             # sender verified in Brevo, e.g. orders@callixe.co
+EMAIL_FROM_NAME=        # e.g. Callixe (max 70 characters)
+EMAIL_REPLY_TO=         # optional; blank = replies go to EMAIL_FROM
 STORAGE_DRIVER=local | spaces
 STORAGE_PUBLIC_URL=     # local: http://localhost:3000/uploads; spaces: the CDN URL. No trailing slash
 SPACES_ENDPOINT=        # only when STORAGE_DRIVER=spaces

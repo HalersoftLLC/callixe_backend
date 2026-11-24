@@ -11,8 +11,7 @@ const baseEnv: DatabaseEnv = {
   DB_SSL: false,
 };
 
-const pem =
-  '-----BEGIN CERTIFICATE-----\nMIIEQTCC\n-----END CERTIFICATE-----';
+const pem = '-----BEGIN CERTIFICATE-----\nMIIEQTCC\n-----END CERTIFICATE-----';
 
 describe('buildDataSourceOptions', () => {
   it('connects without SSL when DB_SSL is false', () => {

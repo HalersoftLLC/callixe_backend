@@ -15,6 +15,7 @@ import { CreateOrderDto, OrderItemDto } from './dto/create-order.dto';
 import { DiscountCode } from './entities/discount-code.entity';
 import { OrderItem } from './entities/order-item.entity';
 import { Order, OrderStatus } from './entities/order.entity';
+import { OrderEmailsService } from './order-emails.service';
 import { STANDARD_SHIPPING_PRICE } from './orders.constants';
 import { calculateLineTotal, calculateTotals } from './pricing';
 
@@ -29,6 +30,7 @@ export class OrdersService {
     private readonly discountCodesRepository: Repository<DiscountCode>,
     private readonly productsService: ProductsService,
     private readonly paymentsService: PaymentsService,
+    private readonly orderEmailsService: OrderEmailsService,
     private readonly dataSource: DataSource,
     private readonly config: ConfigService<EnvironmentVariables, true>,
   ) {}
@@ -99,6 +101,12 @@ export class OrdersService {
           ? `${tag} → ${label} paid`
           : `${tag} → ${label} already paid (duplicate)`,
       );
+      // Only the event that actually marked it paid sends the email, so a
+      // duplicate event never emails twice. Not awaited: Stripe gets its
+      // 2xx without waiting for Brevo, and sendConfirmation never throws.
+      if (affected) {
+        void this.orderEmailsService.sendConfirmation(order.id);
+      }
       return;
     }
 
