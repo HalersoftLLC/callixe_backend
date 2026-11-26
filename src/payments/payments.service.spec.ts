@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   InternalServerErrorException,
   Logger,
 } from '@nestjs/common';
@@ -7,18 +8,17 @@ import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import Stripe from 'stripe';
 import {
-  CheckoutOrder,
+  PaymentCart,
   PaymentsService,
   STRIPE_CLIENT,
 } from './payments.service';
 
 const NOW_MS = Date.UTC(2026, 10, 13, 12, 0, 0);
+const CLIENT_SECRET = 'cs_test_1_secret_abc';
 
-function makeOrder(overrides: Partial<CheckoutOrder> = {}): CheckoutOrder {
+// Kept as makeOrder so the existing tests read the same; it is a priced cart.
+function makeOrder(overrides: Partial<PaymentCart> = {}): PaymentCart {
   return {
-    id: '6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b',
-    orderNumber: 1001,
-    email: 'customer@example.com',
     currency: 'usd',
     total: 72600,
     discountCode: null,
@@ -59,7 +59,9 @@ describe('PaymentsService', () => {
   let service: PaymentsService;
 
   const stripe = {
-    checkout: { sessions: { create: jest.fn() } },
+    checkout: {
+      sessions: { create: jest.fn(), retrieve: jest.fn(), update: jest.fn() },
+    },
     coupons: { create: jest.fn() },
     webhooks: { constructEvent: jest.fn() },
   };
@@ -77,7 +79,8 @@ describe('PaymentsService', () => {
     jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
     stripe.checkout.sessions.create.mockResolvedValue({
       id: 'cs_test_1',
-      url: 'https://checkout.stripe.com/c/pay/cs_test_1',
+      client_secret: CLIENT_SECRET,
+      url: null,
       amount_total: 72600,
     });
 
@@ -93,20 +96,28 @@ describe('PaymentsService', () => {
 
   afterEach(() => dateNow.mockRestore());
 
-  describe('createCheckoutSession', () => {
-    it('sends server prices, order references, and a 30-minute expiry', async () => {
-      const order = makeOrder();
-
-      await expect(service.createCheckoutSession(order)).resolves.toEqual({
+  describe('createPaymentSession', () => {
+    it('creates a card-only Elements session with server prices and a 30-minute expiry', async () => {
+      await expect(service.createPaymentSession(makeOrder())).resolves.toEqual({
         id: 'cs_test_1',
-        url: 'https://checkout.stripe.com/c/pay/cs_test_1',
+        clientSecret: CLIENT_SECRET,
       });
 
       expect(stripe.coupons.create).not.toHaveBeenCalled();
       expect(stripe.checkout.sessions.create).toHaveBeenCalledTimes(1);
       const params = stripe.checkout.sessions.create.mock.calls[0][0];
+      // No email, return_url or order references yet: the order doesn't
+      // exist until Complete Purchase (linkOrder adds orderId later).
       expect(params).toEqual({
         mode: 'payment',
+        ui_mode: 'elements',
+        // Card only: every other type is excluded (PayPal, Klarna, …).
+        excluded_payment_method_types: expect.arrayContaining([
+          'paypal',
+          'klarna',
+          'afterpay_clearpay',
+          'cashapp',
+        ]),
         line_items: [
           {
             price_data: {
@@ -117,29 +128,47 @@ describe('PaymentsService', () => {
             quantity: 2,
           },
         ],
-        customer_email: 'customer@example.com',
-        client_reference_id: order.id,
-        metadata: { orderId: order.id },
-        payment_intent_data: {
-          receipt_email: 'customer@example.com',
-          metadata: { orderId: order.id },
-        },
-        success_url: `http://localhost:5173/order-confirmation/${order.id}`,
-        cancel_url: 'http://localhost:5173/checkout',
         expires_at: NOW_MS / 1000 + 1800,
       });
       expect(params).not.toHaveProperty('discounts');
+      expect(stripe.checkout.sessions.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          excluded_payment_method_types: expect.not.arrayContaining(['card']),
+        }),
+      );
+    });
+
+    it('never logs the client secret', async () => {
+      const log = jest.spyOn(Logger.prototype, 'log');
+
+      await service.createPaymentSession(makeOrder());
+
+      expect(log).toHaveBeenCalled();
+      expect(JSON.stringify(log.mock.calls)).not.toContain(CLIENT_SECRET);
+    });
+
+    it('refuses a session without a client secret', async () => {
+      stripe.checkout.sessions.create.mockResolvedValue({
+        id: 'cs_test_1',
+        client_secret: null,
+        url: null,
+        amount_total: 72600,
+      });
+
+      await expect(
+        service.createPaymentSession(makeOrder()),
+      ).rejects.toBeInstanceOf(InternalServerErrorException);
     });
 
     it('sends every second unit of a deal as a separate half-price line', async () => {
       stripe.checkout.sessions.create.mockResolvedValue({
         id: 'cs_test_1',
-        url: 'https://checkout.stripe.com/c/pay/cs_test_1',
+        client_secret: CLIENT_SECRET,
         amount_total: 90750,
       });
 
       // 3 units: 2 at full price + 1 at half price = 36300 * 2 + 18150
-      await service.createCheckoutSession(
+      await service.createPaymentSession(
         makeOrder({
           total: 90750,
           items: [
@@ -178,11 +207,11 @@ describe('PaymentsService', () => {
       stripe.coupons.create.mockResolvedValue({ id: 'coupon_id' });
       stripe.checkout.sessions.create.mockResolvedValue({
         id: 'cs_test_1',
-        url: 'https://checkout.stripe.com/c/pay/cs_test_1',
+        client_secret: CLIENT_SECRET,
         amount_total: 65340,
       });
 
-      await service.createCheckoutSession(
+      await service.createPaymentSession(
         makeOrder({
           discountCode: 'WELCOME10',
           discountAmount: 7260,
@@ -205,13 +234,92 @@ describe('PaymentsService', () => {
     it('refuses a session whose total differs from the order total', async () => {
       stripe.checkout.sessions.create.mockResolvedValue({
         id: 'cs_test_1',
-        url: 'https://checkout.stripe.com/c/pay/cs_test_1',
+        client_secret: CLIENT_SECRET,
         amount_total: 1,
       });
 
       await expect(
-        service.createCheckoutSession(makeOrder()),
+        service.createPaymentSession(makeOrder()),
       ).rejects.toBeInstanceOf(InternalServerErrorException);
+    });
+  });
+
+  describe('getOpenSession', () => {
+    it('returns the amount and currency of an open session', async () => {
+      stripe.checkout.sessions.retrieve.mockResolvedValue({
+        id: 'cs_test_1',
+        status: 'open',
+        amount_total: 72600,
+        currency: 'usd',
+      });
+
+      await expect(service.getOpenSession('cs_test_1')).resolves.toEqual({
+        id: 'cs_test_1',
+        amountTotal: 72600,
+        currency: 'usd',
+      });
+    });
+
+    it.each(['complete', 'expired'])(
+      'refuses a %s session with 409',
+      async (status) => {
+        stripe.checkout.sessions.retrieve.mockResolvedValue({
+          id: 'cs_test_1',
+          status,
+          amount_total: 72600,
+          currency: 'usd',
+        });
+
+        await expect(
+          service.getOpenSession('cs_test_1'),
+        ).rejects.toBeInstanceOf(ConflictException);
+      },
+    );
+
+    it('refuses an unknown session with 409', async () => {
+      stripe.checkout.sessions.retrieve.mockRejectedValue(
+        new Stripe.errors.StripeInvalidRequestError({
+          message: 'No such checkout.session',
+          type: 'invalid_request_error',
+        }),
+      );
+
+      await expect(
+        service.getOpenSession('cs_test_missing'),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('passes other Stripe errors through (caller answers 503)', async () => {
+      stripe.checkout.sessions.retrieve.mockRejectedValue(new Error('timeout'));
+
+      await expect(service.getOpenSession('cs_test_1')).rejects.toThrow(
+        'timeout',
+      );
+    });
+  });
+
+  describe('linkOrder', () => {
+    it('adds orderId to the session and its PaymentIntent', async () => {
+      stripe.checkout.sessions.update.mockResolvedValue({});
+
+      await service.linkOrder('cs_test_1', 'order-uuid');
+
+      expect(stripe.checkout.sessions.update).toHaveBeenCalledWith(
+        'cs_test_1',
+        {
+          metadata: { orderId: 'order-uuid' },
+          payment_intent_data: { metadata: { orderId: 'order-uuid' } },
+        },
+      );
+    });
+
+    it('never throws when Stripe fails', async () => {
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+      stripe.checkout.sessions.update.mockRejectedValue(new Error('down'));
+
+      await expect(
+        service.linkOrder('cs_test_1', 'order-uuid'),
+      ).resolves.toBeUndefined();
     });
   });
 

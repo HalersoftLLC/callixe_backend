@@ -91,20 +91,11 @@ export class OrderItemDto {
   quantity!: number;
 }
 
-// Only slugs and quantities: prices and totals are always calculated on the
-// server (CLAUDE.md section 5). Unknown fields are rejected by the global
-// ValidationPipe (forbidNonWhitelisted).
-export class CreateOrderDto {
-  @Trim()
-  @IsEmail()
-  @MaxLength(254)
-  email!: string;
-
-  @IsDefined()
-  @ValidateNested()
-  @Type(() => DeliveryDto)
-  delivery!: DeliveryDto;
-
+// POST /orders/payment-session: the cart only. Only slugs and quantities:
+// prices and totals are always calculated on the server (CLAUDE.md
+// section 5). Unknown fields are rejected by the global ValidationPipe
+// (forbidNonWhitelisted).
+export class CreatePaymentSessionDto {
   @IsArray()
   @ArrayMinSize(1)
   @ArrayMaxSize(MAX_ITEMS_PER_ORDER)
@@ -117,4 +108,25 @@ export class CreateOrderDto {
   @IsString()
   @MaxLength(DISCOUNT_CODE_MAX_LENGTH)
   discountCode?: string;
+}
+
+// POST /orders: the same cart, the customer's details, and the session the
+// card form was opened with.
+export class CreateOrderDto extends CreatePaymentSessionDto {
+  @Trim()
+  @IsEmail()
+  @MaxLength(254)
+  email!: string;
+
+  @IsDefined()
+  @ValidateNested()
+  @Type(() => DeliveryDto)
+  delivery!: DeliveryDto;
+
+  @IsString()
+  @MaxLength(255)
+  @Matches(/^cs_(test|live)_[A-Za-z0-9]+$/, {
+    message: 'paymentSessionId must be a Stripe Checkout Session id',
+  })
+  paymentSessionId!: string;
 }

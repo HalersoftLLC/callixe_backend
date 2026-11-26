@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Logger,
   NotFoundException,
   ServiceUnavailableException,
@@ -7,7 +8,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { DataSource, IsNull, Not } from 'typeorm';
+import { DataSource, IsNull, Not, QueryFailedError } from 'typeorm';
 import { PaymentOutcome, PaymentsService } from '../payments/payments.service';
 import { Product } from '../products/entities/product.entity';
 import { ProductsService } from '../products/products.service';
@@ -18,7 +19,7 @@ import { Order, OrderStatus } from './entities/order.entity';
 import { OrderEmailsService } from './order-emails.service';
 import { OrdersService } from './orders.service';
 
-const CHECKOUT_URL = 'https://checkout.stripe.com/c/pay/cs_test_1';
+const CLIENT_SECRET = 'cs_test_1_secret_abc';
 
 function makeProduct(
   slug: string,
@@ -52,8 +53,14 @@ function makeDto(overrides: Partial<CreateOrderDto> = {}): CreateOrderDto {
       country: 'Pakistan',
     },
     items: [{ slug: 'neck-pillow-2-0', quantity: 2 }],
+    paymentSessionId: 'cs_test_1',
     ...overrides,
   };
+}
+
+// The open Stripe session charges `amountTotal` (what the card form shows).
+function sessionFor(amountTotal: number) {
+  return { id: 'cs_test_1', amountTotal, currency: 'usd' };
 }
 
 describe('OrdersService', () => {
@@ -66,7 +73,11 @@ describe('OrdersService', () => {
   };
   const discountCodesRepository = { findOneBy: jest.fn() };
   const productsService = { findActiveBySlugs: jest.fn() };
-  const paymentsService = { createCheckoutSession: jest.fn() };
+  const paymentsService = {
+    createPaymentSession: jest.fn(),
+    getOpenSession: jest.fn(),
+    linkOrder: jest.fn(),
+  };
   const orderEmailsService = {
     sendConfirmation: jest.fn(),
     sendShipped: jest.fn(),
@@ -98,10 +109,12 @@ describe('OrdersService', () => {
     dataSource.transaction.mockImplementation(
       (work: (m: typeof manager) => Promise<unknown>) => work(manager),
     );
-    paymentsService.createCheckoutSession.mockResolvedValue({
+    paymentsService.createPaymentSession.mockResolvedValue({
       id: 'cs_test_1',
-      url: CHECKOUT_URL,
+      clientSecret: CLIENT_SECRET,
     });
+    paymentsService.getOpenSession.mockResolvedValue(sessionFor(72600));
+    paymentsService.linkOrder.mockResolvedValue(undefined);
     ordersRepository.update.mockResolvedValue({ affected: 1 });
     orderEmailsService.sendConfirmation.mockResolvedValue(undefined);
 
@@ -130,7 +143,7 @@ describe('OrdersService', () => {
         makeProduct('neck-pillow-2-0', 36300, 'Neck Pillow 2.0'),
       ]);
 
-      const { order } = await service.create(makeDto());
+      const order = await service.create(makeDto());
 
       expect(productsService.findActiveBySlugs).toHaveBeenCalledWith([
         'neck-pillow-2-0',
@@ -164,8 +177,9 @@ describe('OrdersService', () => {
       productsService.findActiveBySlugs.mockResolvedValue([
         makeProduct('neck-pillow-2-0', 36300, 'Neck Pillow 2.0', true),
       ]);
+      paymentsService.getOpenSession.mockResolvedValue(sessionFor(54450));
 
-      const { order } = await service.create(makeDto());
+      const order = await service.create(makeDto());
 
       expect(order).toMatchObject({ subtotal: 54450, total: 54450 });
       expect(order.items).toEqual([
@@ -176,12 +190,6 @@ describe('OrdersService', () => {
           lineTotal: 54450,
         }),
       ]);
-      expect(paymentsService.createCheckoutSession).toHaveBeenCalledWith(
-        expect.objectContaining({
-          total: 54450,
-          items: [expect.objectContaining({ dealDiscount: 18150 })],
-        }),
-      );
     });
 
     it('saves the order and its items inside one transaction', async () => {
@@ -210,8 +218,9 @@ describe('OrdersService', () => {
         value: 10,
         active: true,
       });
+      paymentsService.getOpenSession.mockResolvedValue(sessionFor(32670));
 
-      const { order } = await service.create(
+      const order = await service.create(
         makeDto({
           items: [{ slug: 'neck-pillow-2-0', quantity: 1 }],
           discountCode: 'welcome10',
@@ -278,47 +287,156 @@ describe('OrdersService', () => {
       expect(productsService.findActiveBySlugs).not.toHaveBeenCalled();
     });
 
-    it('creates a Checkout Session after saving and stores its id', async () => {
+    it('saves the session id with the order, then links the order in Stripe', async () => {
       productsService.findActiveBySlugs.mockResolvedValue([
         makeProduct('neck-pillow-2-0', 36300, 'Neck Pillow 2.0'),
       ]);
 
-      const result = await service.create(makeDto());
+      await service.create(makeDto());
 
-      expect(result.checkoutUrl).toBe(CHECKOUT_URL);
-      expect(paymentsService.createCheckoutSession).toHaveBeenCalledWith(
-        expect.objectContaining({
-          id: 'order-uuid',
-          total: 72600,
-          items: [expect.objectContaining({ unitPrice: 36300, quantity: 2 })],
-        }),
+      expect(paymentsService.getOpenSession).toHaveBeenCalledWith('cs_test_1');
+      expect(manager.create).toHaveBeenCalledWith(
+        Order,
+        expect.objectContaining({ stripeCheckoutSessionId: 'cs_test_1' }),
       );
-      // Stripe is called only after the transaction has committed.
+      expect(paymentsService.linkOrder).toHaveBeenCalledWith(
+        'cs_test_1',
+        'order-uuid',
+      );
+      // Stripe is updated only after the transaction has committed.
       expect(dataSource.transaction.mock.invocationCallOrder[0]).toBeLessThan(
-        paymentsService.createCheckoutSession.mock.invocationCallOrder[0],
-      );
-      expect(ordersRepository.update).toHaveBeenCalledWith(
-        { id: 'order-uuid' },
-        { stripeCheckoutSessionId: 'cs_test_1' },
+        paymentsService.linkOrder.mock.invocationCallOrder[0],
       );
     });
 
-    it('marks the order failed and returns 503 when Stripe fails', async () => {
-      jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+    it('rejects a session made for a different total without saving', async () => {
       productsService.findActiveBySlugs.mockResolvedValue([
         makeProduct('neck-pillow-2-0', 36300),
       ]);
-      paymentsService.createCheckoutSession.mockRejectedValue(
+      // Session opened for 1 unit, request asks for 2.
+      paymentsService.getOpenSession.mockResolvedValue(sessionFor(36300));
+
+      await expect(service.create(makeDto())).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+      expect(dataSource.transaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects a session in another currency without saving', async () => {
+      productsService.findActiveBySlugs.mockResolvedValue([
+        makeProduct('neck-pillow-2-0', 36300),
+      ]);
+      paymentsService.getOpenSession.mockResolvedValue({
+        ...sessionFor(72600),
+        currency: 'eur',
+      });
+
+      await expect(service.create(makeDto())).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+      expect(dataSource.transaction).not.toHaveBeenCalled();
+    });
+
+    it('passes a closed or unknown session through as 409', async () => {
+      paymentsService.getOpenSession.mockRejectedValue(
+        new ConflictException('ended'),
+      );
+
+      await expect(service.create(makeDto())).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+      expect(dataSource.transaction).not.toHaveBeenCalled();
+    });
+
+    it('returns 503 when Stripe cannot be reached', async () => {
+      jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+      paymentsService.getOpenSession.mockRejectedValue(
         new Error('Stripe down'),
       );
 
       await expect(service.create(makeDto())).rejects.toBeInstanceOf(
         ServiceUnavailableException,
       );
-      expect(ordersRepository.update).toHaveBeenCalledWith(
-        { id: 'order-uuid' },
-        { status: OrderStatus.Failed },
+      expect(dataSource.transaction).not.toHaveBeenCalled();
+    });
+
+    it('answers 409 when the session already paid for another order', async () => {
+      productsService.findActiveBySlugs.mockResolvedValue([
+        makeProduct('neck-pillow-2-0', 36300),
+      ]);
+      dataSource.transaction.mockRejectedValue(
+        new QueryFailedError('INSERT', [], { code: '23505' } as never),
       );
+
+      await expect(service.create(makeDto())).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+      expect(paymentsService.linkOrder).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('createPaymentSession', () => {
+    it('prices the cart on the server and saves nothing', async () => {
+      productsService.findActiveBySlugs.mockResolvedValue([
+        makeProduct('neck-pillow-2-0', 36300, 'Neck Pillow 2.0', true),
+      ]);
+
+      await expect(
+        service.createPaymentSession({
+          items: [{ slug: 'neck-pillow-2-0', quantity: 2 }],
+        }),
+      ).resolves.toEqual({
+        sessionId: 'cs_test_1',
+        clientSecret: CLIENT_SECRET,
+        total: 54450,
+      });
+
+      expect(paymentsService.createPaymentSession).toHaveBeenCalledWith({
+        currency: 'usd',
+        total: 54450,
+        discountCode: null,
+        discountAmount: 0,
+        items: [
+          expect.objectContaining({
+            name: 'Neck Pillow 2.0',
+            unitPrice: 36300,
+            quantity: 2,
+            dealDiscount: 18150,
+          }),
+        ],
+      });
+      expect(dataSource.transaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects an invalid discount code before calling Stripe', async () => {
+      productsService.findActiveBySlugs.mockResolvedValue([
+        makeProduct('neck-pillow-2-0', 36300),
+      ]);
+      discountCodesRepository.findOneBy.mockResolvedValue(null);
+
+      await expect(
+        service.createPaymentSession({
+          items: [{ slug: 'neck-pillow-2-0', quantity: 1 }],
+          discountCode: 'NOPE',
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(paymentsService.createPaymentSession).not.toHaveBeenCalled();
+    });
+
+    it('returns 503 when Stripe fails', async () => {
+      jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+      productsService.findActiveBySlugs.mockResolvedValue([
+        makeProduct('neck-pillow-2-0', 36300),
+      ]);
+      paymentsService.createPaymentSession.mockRejectedValue(
+        new Error('Stripe down'),
+      );
+
+      await expect(
+        service.createPaymentSession({
+          items: [{ slug: 'neck-pillow-2-0', quantity: 1 }],
+        }),
+      ).rejects.toBeInstanceOf(ServiceUnavailableException);
     });
   });
 

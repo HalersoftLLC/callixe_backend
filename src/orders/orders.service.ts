@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -7,11 +8,19 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, IsNull, Not, Repository } from 'typeorm';
+import { DataSource, IsNull, Not, QueryFailedError, Repository } from 'typeorm';
 import { EnvironmentVariables } from '../config/env.validation';
-import { PaymentOutcome, PaymentsService } from '../payments/payments.service';
+import {
+  PaymentOutcome,
+  PaymentsService,
+  SESSION_CLOSED_MESSAGE,
+} from '../payments/payments.service';
 import { ProductsService } from '../products/products.service';
-import { CreateOrderDto, OrderItemDto } from './dto/create-order.dto';
+import {
+  CreateOrderDto,
+  CreatePaymentSessionDto,
+  OrderItemDto,
+} from './dto/create-order.dto';
 import { DiscountCode } from './entities/discount-code.entity';
 import { OrderItem } from './entities/order-item.entity';
 import { Order, OrderStatus } from './entities/order.entity';
@@ -22,6 +31,38 @@ import {
   calculateLineTotal,
   calculateTotals,
 } from './pricing';
+
+// The cart priced from the database: what the session charges and the
+// order stores.
+interface PricedCart {
+  lines: {
+    slug: string;
+    name: string;
+    unitPrice: number;
+    quantity: number;
+    dealDiscount: number;
+    lineTotal: number;
+  }[];
+  subtotal: number;
+  discountCode: string | null;
+  discountAmount: number;
+  shipping: number;
+  total: number;
+  currency: string;
+}
+
+const PAYMENT_UNAVAILABLE_MESSAGE =
+  'Payment is temporarily unavailable, please try again';
+const CART_CHANGED_MESSAGE =
+  'Your cart changed. Please reload checkout and try again.';
+
+// PostgreSQL unique_violation (here: UQ_orders_stripe_checkout_session_id).
+function isUniqueViolation(err: unknown): boolean {
+  return (
+    err instanceof QueryFailedError &&
+    (err.driverError as { code?: string } | undefined)?.code === '23505'
+  );
+}
 
 export interface ShipOrderResult {
   shippedAt: Date;
@@ -46,34 +87,74 @@ export class OrdersService {
     private readonly config: ConfigService<EnvironmentVariables, true>,
   ) {}
 
-  // Saves the pending order, then opens a Stripe Checkout Session for it.
-  async create(
-    dto: CreateOrderDto,
-  ): Promise<{ order: Order; checkoutUrl: string }> {
-    const order = await this.saveOrder(dto);
-
-    // Outside the transaction: never hold a DB transaction open during a
-    // network call to Stripe.
+  // Checkout opened: price the cart and create the Stripe session that shows
+  // the card form. Nothing is saved; the order is created by `create` when
+  // the customer clicks Complete Purchase.
+  async createPaymentSession(
+    dto: CreatePaymentSessionDto,
+  ): Promise<{ sessionId: string; clientSecret: string; total: number }> {
+    const cart = await this.priceCart(dto);
     try {
-      const session = await this.paymentsService.createCheckoutSession(order);
-      await this.ordersRepository.update(
-        { id: order.id },
-        { stripeCheckoutSessionId: session.id },
-      );
-      order.stripeCheckoutSessionId = session.id;
-      return { order, checkoutUrl: session.url };
+      const session = await this.paymentsService.createPaymentSession({
+        currency: cart.currency,
+        total: cart.total,
+        discountCode: cart.discountCode,
+        discountAmount: cart.discountAmount,
+        items: cart.lines,
+      });
+      return {
+        sessionId: session.id,
+        clientSecret: session.clientSecret,
+        total: cart.total,
+      };
     } catch (err) {
-      // This order can never be paid; close it so it is not left pending.
+      this.logger.error(`Checkout session failed: ${(err as Error).message}`);
+      throw new ServiceUnavailableException(PAYMENT_UNAVAILABLE_MESSAGE);
+    }
+  }
+
+  // Complete Purchase: saves the pending order against the session the card
+  // form was opened with. The session must still be open and charge exactly
+  // the re-priced total, so a session made for another cart can't pay for
+  // this one. The unique session id means one session pays one order.
+  async create(dto: CreateOrderDto): Promise<Order> {
+    const session = await this.getOpenSession(dto.paymentSessionId);
+    const cart = await this.priceCart(dto);
+
+    const sameCurrency =
+      session.currency?.toLowerCase() === cart.currency.toLowerCase();
+    if (session.amountTotal !== cart.total || !sameCurrency) {
+      throw new ConflictException(CART_CHANGED_MESSAGE);
+    }
+
+    let order: Order;
+    try {
+      order = await this.saveOrder(dto, cart, session.id);
+    } catch (err) {
+      if (isUniqueViolation(err)) {
+        throw new ConflictException(SESSION_CLOSED_MESSAGE);
+      }
+      throw err;
+    }
+
+    // Outside the transaction (network call); never throws.
+    await this.paymentsService.linkOrder(session.id, order.id);
+    this.logger.log(
+      `Order #${order.orderNumber} created for session ${session.id}`,
+    );
+    return order;
+  }
+
+  // 409 for a closed/unknown session passes through; Stripe being down is 503.
+  private async getOpenSession(sessionId: string) {
+    try {
+      return await this.paymentsService.getOpenSession(sessionId);
+    } catch (err) {
+      if (err instanceof ConflictException) throw err;
       this.logger.error(
-        `Checkout session failed for order #${order.orderNumber}: ${(err as Error).message}`,
+        `Checkout session ${sessionId} lookup failed: ${(err as Error).message}`,
       );
-      await this.ordersRepository.update(
-        { id: order.id },
-        { status: OrderStatus.Failed },
-      );
-      throw new ServiceUnavailableException(
-        'Payment is temporarily unavailable, please try again',
-      );
+      throw new ServiceUnavailableException(PAYMENT_UNAVAILABLE_MESSAGE);
     }
   }
 
@@ -176,7 +257,7 @@ export class OrdersService {
 
   // Prices come only from the database via ProductsService; the request
   // carries slugs and quantities and nothing else (CLAUDE.md section 5).
-  private async saveOrder(dto: CreateOrderDto): Promise<Order> {
+  private async priceCart(dto: CreatePaymentSessionDto): Promise<PricedCart> {
     this.assertUniqueSlugs(dto.items);
 
     const slugs = dto.items.map((item) => item.slug);
@@ -216,7 +297,24 @@ export class OrdersService {
     });
     const totals = calculateTotals(lines, discount, STANDARD_SHIPPING_PRICE);
 
-    // Order and items are saved together or not at all (CLAUDE.md 7.1).
+    return {
+      lines,
+      subtotal: totals.subtotal,
+      discountCode: discount?.code ?? null,
+      discountAmount: totals.discountAmount,
+      shipping: totals.shipping,
+      total: totals.total,
+      currency: this.config.get('CURRENCY', { infer: true }),
+    };
+  }
+
+  // Order and items are saved together or not at all (CLAUDE.md 7.1), with
+  // the Stripe session id already set (unique: one session, one order).
+  private saveOrder(
+    dto: CreateOrderDto,
+    cart: PricedCart,
+    sessionId: string,
+  ): Promise<Order> {
     return this.dataSource.transaction(async (manager) => {
       const order = await manager.save(
         manager.create(Order, {
@@ -229,17 +327,18 @@ export class OrdersService {
           postalCode: dto.delivery.postalCode ?? null,
           country: dto.delivery.country,
           phone: dto.delivery.phone ?? null,
-          subtotal: totals.subtotal,
-          discountCode: discount?.code ?? null,
-          discountAmount: totals.discountAmount,
-          shipping: totals.shipping,
-          total: totals.total,
-          currency: this.config.get('CURRENCY', { infer: true }),
+          subtotal: cart.subtotal,
+          discountCode: cart.discountCode,
+          discountAmount: cart.discountAmount,
+          shipping: cart.shipping,
+          total: cart.total,
+          currency: cart.currency,
+          stripeCheckoutSessionId: sessionId,
         }),
       );
 
       order.items = await manager.save(
-        lines.map((line) => manager.create(OrderItem, { ...line, order })),
+        cart.lines.map((line) => manager.create(OrderItem, { ...line, order })),
       );
       return order;
     });

@@ -11,7 +11,7 @@ Where Callixe runs in production and how to update it. **No secrets in this file
 | Product images | Same Droplet, local disk | https://api.callixe.co/uploads/... |
 | Storefront (React build) | Hostinger Cloud Startup | https://callixe.co |
 | Admin (React build) | Hostinger Cloud Startup | https://admin.callixe.co |
-| Payments | Stripe (hosted Checkout) | Webhook: https://api.callixe.co/payments/webhook |
+| Payments | Stripe (Elements with Checkout Sessions, card form on callixe.co) | Webhook: https://api.callixe.co/payments/webhook |
 | Email | Brevo API | — |
 
 ## Droplet
@@ -139,6 +139,7 @@ Both read `VITE_API_URL=https://api.callixe.co` from their `.env.production`, an
 - Events (same for every destination): `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `checkout.session.expired`, `charge.refunded`, `charge.dispute.created`. Payload style: Snapshot. Events from: Your account.
 - **Adaptive Pricing** (customers pay in their own currency, CLAUDE.md 6.3): Settings → Payments (https://dashboard.stripe.com/test/settings/payments, live: https://dashboard.stripe.com/settings/payments), on in each mode separately.
 - Test order: email `test+location_PK@example.com`, card `4242 4242 4242 4242` → order `paid` in the admin with "Customer paid PKR ...".
+- **Elements checkout (card form on callixe.co, one step):** checkout calls `POST /orders/payment-session` when it opens, then `POST /orders` (with `paymentSessionId`) on Complete Purchase; no more `checkoutUrl`. **Deploy the backend and the storefront together**: an old storefront build can't take payments with the new backend, and the reverse. The storefront needs its Stripe publishable key (`pk_test_` / `pk_live_`) in the **same mode** as the server's `STRIPE_SECRET_KEY`.
 
 ### Going live (later)
 

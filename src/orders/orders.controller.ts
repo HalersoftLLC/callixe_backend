@@ -8,12 +8,20 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
-import { CreateOrderDto } from './dto/create-order.dto';
+import {
+  CreateOrderDto,
+  CreatePaymentSessionDto,
+} from './dto/create-order.dto';
 import {
   CreateOrderResponseDto,
   OrderResponseDto,
+  PaymentSessionResponseDto,
 } from './dto/order-response.dto';
-import { CREATE_ORDER_RATE_LIMIT, RATE_LIMIT_TTL_MS } from './orders.constants';
+import {
+  CREATE_ORDER_RATE_LIMIT,
+  PAYMENT_SESSION_RATE_LIMIT,
+  RATE_LIMIT_TTL_MS,
+} from './orders.constants';
 import { OrdersService } from './orders.service';
 
 @Controller('orders')
@@ -28,8 +36,21 @@ export class OrdersController {
     default: { limit: CREATE_ORDER_RATE_LIMIT, ttl: RATE_LIMIT_TTL_MS },
   })
   async create(@Body() dto: CreateOrderDto): Promise<CreateOrderResponseDto> {
-    const { order, checkoutUrl } = await this.ordersService.create(dto);
-    return CreateOrderResponseDto.fromEntity(order, checkoutUrl);
+    const order = await this.ordersService.create(dto);
+    return CreateOrderResponseDto.fromEntity(order);
+  }
+
+  // Called when checkout opens (and when the discount changes) so the card
+  // form can show before the customer has typed anything. Saves nothing.
+  @Post('payment-session')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({
+    default: { limit: PAYMENT_SESSION_RATE_LIMIT, ttl: RATE_LIMIT_TTL_MS },
+  })
+  createPaymentSession(
+    @Body() dto: CreatePaymentSessionDto,
+  ): Promise<PaymentSessionResponseDto> {
+    return this.ordersService.createPaymentSession(dto);
   }
 
   @Get(':id')

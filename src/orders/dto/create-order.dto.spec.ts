@@ -1,6 +1,6 @@
 import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
-import { CreateOrderDto } from './create-order.dto';
+import { CreateOrderDto, CreatePaymentSessionDto } from './create-order.dto';
 
 function validBody(): Record<string, any> {
   return {
@@ -17,6 +17,7 @@ function validBody(): Record<string, any> {
     },
     items: [{ slug: 'neck-pillow-2-0', quantity: 1 }],
     discountCode: '',
+    paymentSessionId: 'cs_test_a1B2c3',
   };
 }
 
@@ -62,6 +63,11 @@ describe('CreateOrderDto', () => {
     ['a price sent by the client', (b: any) => (b.items[0].price = 1)],
     ['a total sent by the client', (b: any) => (b.total = 1)],
     ['an unknown delivery field', (b: any) => (b.delivery.extra = 'x')],
+    ['a missing payment session', (b: any) => delete b.paymentSessionId],
+    [
+      'a payment session that is not a Stripe session id',
+      (b: any) => (b.paymentSessionId = 'pi_123'),
+    ],
   ])('rejects %s', (_label, mutate) => {
     const body = validBody();
     mutate(body);
@@ -75,5 +81,43 @@ describe('CreateOrderDto', () => {
       quantity: 1,
     }));
     expect(validate(body).errors.length).toBeGreaterThan(0);
+  });
+});
+
+describe('CreatePaymentSessionDto', () => {
+  function validateSession(body: Record<string, any>) {
+    return validateSync(plainToInstance(CreatePaymentSessionDto, body), {
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    });
+  }
+
+  it('accepts just the cart and a discount code', () => {
+    expect(
+      validateSession({
+        items: [{ slug: 'neck-pillow-2-0', quantity: 2 }],
+        discountCode: 'WELCOME10',
+      }),
+    ).toHaveLength(0);
+  });
+
+  it.each([
+    ['an empty cart', { items: [] }],
+    [
+      'an email (not part of the session request)',
+      {
+        items: [{ slug: 'neck-pillow-2-0', quantity: 1 }],
+        email: 'customer@example.com',
+      },
+    ],
+    [
+      'a total sent by the client',
+      {
+        items: [{ slug: 'neck-pillow-2-0', quantity: 1 }],
+        total: 1,
+      },
+    ],
+  ])('rejects %s', (_label, body) => {
+    expect(validateSession(body).length).toBeGreaterThan(0);
   });
 });

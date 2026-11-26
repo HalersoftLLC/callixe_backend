@@ -35,7 +35,7 @@ Keep the backend as small as this flow needs. Do not invent features.
 - Stripe (Node SDK)
 - class-validator / class-transformer (DTO validation)
 - @nestjs/config (environment variables)
-- @nestjs/throttler (rate limiting, applied per route: `POST /orders`, `POST /discounts/validate`, `POST /admin/login`)
+- @nestjs/throttler (rate limiting, applied per route: `POST /orders`, `POST /orders/payment-session`, `POST /discounts/validate`, `POST /admin/login`)
 - @nestjs/jwt + bcrypt (admin login only)
 - Jest + Supertest (testing)
 
@@ -138,7 +138,7 @@ Module responsibilities:
 - **Products:** the product catalog and the source of truth for prices. Public routes are read-only; create/update happen only through the admin.
 - **Admin:** admin login and the admin HTTP routes. Holds no repositories and imports no other module's entities or DTOs: it calls exported services (`ProductsService`, later `OrdersService`) and uses the types those service files export.
 - **Orders:** create orders from checkout data, calculate totals, validate discount codes, return an order for the confirmation page.
-- **Payments:** create Stripe Checkout Sessions (hosted payment page) and handle the Stripe webhook that marks orders as paid or failed.
+- **Payments:** create Stripe Checkout Sessions (`ui_mode: 'elements'`: card fields on the storefront's own checkout page) and handle the Stripe webhook that marks orders as paid or failed.
 - **Email:** sends transactional email through the Brevo API (`POST https://api.brevo.com/v3/smtp/email`, Node's built-in `fetch`, 10 s timeout). Knows nothing about orders; features build their own content.
 
 Email rules:
@@ -147,7 +147,7 @@ Email rules:
 - It is started without `await` (fire-and-forget) so Stripe gets its 2xx quickly. `OrderEmailsService` never throws: a Brevo failure is logged and the order stays paid. No retry and no "sent" column yet (Phase 2).
 - Every customer value put into email HTML goes through `escapeHtml`. Emails use table layout + inline CSS (email clients), plus a plain-text copy.
 - Never log the API key, email bodies or customer email addresses; log the order number and Brevo's message id or error code.
-- Stripe's own `receipt_email` is kept, so a paying customer gets both emails.
+- Stripe's own receipt: `receipt_email` can no longer be set (the session is created before the email is known). Whether Stripe still emails a receipt depends on Dashboard → Settings → Customer emails; our Brevo confirmation is always sent.
 - `ORDER_NOTIFY_EMAIL` (optional) gets a hidden copy (BCC) of every confirmation: the same email, in the same send. Skipped when it equals the customer's email. If the send fails, neither copy arrives.
 - **Shipping email** ("Your order #N is on its way"): sent by the admin's Mark as shipped / Resend (`POST /admin/orders/:id/ship`). Unlike the confirmation it is **awaited**, because the admin waits to see whether it went out: `sendShipped` returns the sent time or `null` (never throws), and `shipping_email_sent_at` is set only after a successful send. No link to the order page, no tracking details. Same BCC rule.
 - **Database:** TypeORM data source and migrations (schema and seed data). Each feature module registers its own entities with `TypeOrmModule.forFeature([...])`.
@@ -163,7 +163,8 @@ The frontend depends on these endpoints. Do not change their shape without telli
 | GET | `/products` | List active products: `{ slug, name, price, compareAtPrice, description, badge, secondUnitHalfOff, images: [{ url, isMain }] }` |
 | GET | `/products/:slug` | One active product (same shape), 404 if not found |
 | POST | `/discounts/validate` | Body `{ code }` → 200 `{ code, type, value }` or 400. 10/min per IP |
-| POST | `/orders` | Create pending order, returns `{ orderId, orderNumber, total, checkoutUrl }`; the frontend redirects to `checkoutUrl` (Stripe-hosted page). 8/min per IP |
+| POST | `/orders/payment-session` | Called when checkout opens (and when the discount changes). Body `{ items, discountCode? }` → `{ sessionId, clientSecret, total }`: server-priced, card-only Stripe Checkout Session; the frontend mounts Stripe Elements (Currency Selector + Payment Element) with `clientSecret`. **Saves nothing.** 20/min per IP |
+| POST | `/orders` | "Complete Purchase". Body = the `POST /orders` body below + `paymentSessionId`. Re-prices the cart, checks the session is open, unused and charges exactly that total (else 409), saves the pending order with `stripe_checkout_session_id`, returns `{ orderId, orderNumber, total }`. The frontend then calls Stripe's `confirm({ email, billingAddress?, returnUrl })`. 8/min per IP |
 | GET | `/orders/:id` | Order for the confirmation page (UUID v4, 400 if malformed, 404 if missing). Includes `presentment: { amount, currency } \| null` (what the customer paid in their own currency, display only) |
 | POST | `/payments/webhook` | Stripe webhook only |
 | GET | `/featured-cards` | The two Shop page product cards: `[{ slot, slug, imagePosition, promo }]`, only cards with an active product. The storefront takes name/prices/image from `GET /products` by slug |
@@ -213,7 +214,8 @@ There is no product DELETE: `active: false` hides a product and keeps past order
     "city": "", "postalCode": "", "country": "Pakistan", "phone": ""
   },
   "items": [{ "slug": "neck-pillow-2-0", "quantity": 1 }],
-  "discountCode": "WELCOME10"
+  "discountCode": "WELCOME10",
+  "paymentSessionId": "cs_test_..."
 }
 ```
 
@@ -249,8 +251,9 @@ Before writing or changing any Stripe code, **read the relevant official Stripe 
 - Verifying signatures: https://docs.stripe.com/webhooks#verify-events
 - Webhook best practices (duplicate events, event ordering, quick 2xx responses): https://docs.stripe.com/webhooks#best-practices
 - Testing webhooks locally with the Stripe CLI: https://docs.stripe.com/webhooks#test-webhook
-- Checkout quickstart (hosted page): https://docs.stripe.com/checkout/quickstart
-- Checkout fulfillment (webhook events, `payment_status`, idempotency): https://docs.stripe.com/checkout/fulfillment
+- Integration options (we use Elements with the Checkout Sessions API): https://docs.stripe.com/payments/online-payments
+- Custom checkout page quickstart (`ui_mode: 'elements'`): https://docs.stripe.com/checkout/custom/quickstart
+- Checkout fulfillment (webhook events, `payment_status`, idempotency): https://docs.stripe.com/checkout/fulfillment?ui=elements
 - Create a Checkout Session: https://docs.stripe.com/api/checkout/sessions/create
 - Checkout Session object: https://docs.stripe.com/api/checkout/sessions/object
 - Coupons (discounts in Checkout): https://docs.stripe.com/api/coupons/create and https://docs.stripe.com/payments/checkout/discounts
@@ -262,11 +265,11 @@ When you implement Stripe code, say which doc pages you followed.
 
 - Return a 2xx response to Stripe quickly. Do only the order status update in the webhook, not slow work.
 - Only handle the event types we need, and ignore all others with a 2xx response.
-- Use **Stripe hosted Checkout**: the backend creates a Checkout Session and returns its `url`; the frontend redirects there. The frontend needs no Stripe package and no publishable key.
+- Use **Elements with the Checkout Sessions API** (`ui_mode: 'elements'`), **one step**: the session is created when checkout opens (`POST /orders/payment-session`, no order yet) so the card form shows on first load; "Complete Purchase" creates the order against that session (`POST /orders` with `paymentSessionId`) and then confirms the payment in the browser. A session pays for at most one order (`UQ_orders_stripe_checkout_session_id`, 409); a session whose `amount_total`/currency differs from the re-priced order, or that is no longer `open`, is refused with 409 and nothing is saved. A visitor who leaves creates no order (the session just expires; the webhook logs the unknown session). The storefront uses `@stripe/stripe-js` + `@stripe/react-stripe-js` and a publishable key (`pk_test_` / `pk_live_`, same mode as `STRIPE_SECRET_KEY`). No Express Checkout buttons (Apple Pay / Google Pay / Link) unless I ask. Stripe account country: US.
+- The client secret is returned **only** by `POST /orders/payment-session`. Never log it and never return it from any other route.
 - **Card details never touch this server.** Never accept, log, or store card numbers, CVC, or expiry.
-- Create the Checkout Session from the saved order only: one `price_data` line per order item (server prices), the discount as a one-time coupon (`amount_off = discountAmount`, `max_redemptions: 1`), `customer_email`, `client_reference_id` and `metadata.orderId`, `payment_intent_data.receipt_email` and `payment_intent_data.metadata.orderId`, `expires_at` = 30 minutes. The session's `amount_total` must equal the order total.
-- `success_url` = `${FRONTEND_URL}/order-confirmation/<orderId>`, `cancel_url` = `${FRONTEND_URL}/checkout`.
-- An order becomes `paid` **only** from the webhook (`checkout.session.completed` with `payment_status = 'paid'`, or `checkout.session.async_payment_succeeded`), never from the success page or a frontend request. The session amount and currency must match the order.
+- Create the Checkout Session from the server-priced cart only: `excluded_payment_method_types` = every non-card type (card only: no PayPal/Klarna/etc. whatever the Dashboard says; this API version has no `payment_method_types` on Checkout Sessions), one `price_data` line per item (server prices), the discount as a one-time coupon (`amount_off = discountAmount`, `max_redemptions: 1`), `expires_at` = 30 minutes. The session's `amount_total` must equal the cart total and its `client_secret` must be present. No `customer_email`, `receipt_email`, `client_reference_id` or `return_url` at creation (no order or email yet; `receipt_email` can't be updated later): the email reaches Stripe through `confirm({ email })` and the storefront passes `returnUrl` = `/order-confirmation/<orderId>` to `confirm()`. After the order is saved, `sessions.update` adds `metadata.orderId` and `payment_intent_data.metadata.orderId` (failure only logged). `success_url` / `cancel_url` are not allowed with `ui_mode: 'elements'`.
+- An order becomes `paid` **only** from the webhook (`checkout.session.completed` with `payment_status = 'paid'`, or `checkout.session.async_payment_succeeded`), never from the confirmation page, the browser's `confirm()` result or a frontend request. No "session status" endpoint: the confirmation page reads `GET /orders/:id`. The session amount and currency must match the order.
 - Verify every webhook signature with `STRIPE_WEBHOOK_SECRET` using the **raw request body** (`NestFactory.create(AppModule, { rawBody: true })`).
 - Webhook handling must be **idempotent**: receiving the same event twice must not break anything or double-update.
 - `checkout.session.async_payment_failed` and `checkout.session.expired` mark a `pending` order `failed`. A `paid` order is never changed by a later event (events can arrive out of order).
@@ -274,13 +277,13 @@ When you implement Stripe code, say which doc pages you followed.
 
 ## 6.3 Local currencies (Stripe Adaptive Pricing)
 
-Docs: https://docs.stripe.com/payments/currencies/localize-prices/adaptive-pricing and the `presentment_details` field of https://docs.stripe.com/api/checkout/sessions/object
+Docs: https://docs.stripe.com/payments/currencies/localize-prices/adaptive-pricing?payment-ui=embedded-components (Elements variant) and the `presentment_details` field of https://docs.stripe.com/api/checkout/sessions/object
 
 - **One price currency.** Products, orders, totals, discounts and reports are all in `CURRENCY` (usd). Never store a price per currency and never sum different currencies.
-- Customers pay in their own currency through **Adaptive Pricing**, switched on in the Stripe Dashboard (test and live mode separately), not in code. Sessions are still created in `CURRENCY`; Stripe converts on its page (rate guaranteed 24 h, customer pays the 2–4 % conversion fee, refunds go back at the original rate).
+- Customers pay in their own currency through **Adaptive Pricing**, switched on in the Stripe Dashboard (test and live mode separately), not in code (the session's `adaptive_pricing.enabled` is not set, so it follows the Dashboard). With Elements the storefront must also pass `adaptivePricing: { allowed: true }` and render the **Currency Selector Element** (required by Stripe). Sessions are still created in `CURRENCY`; Stripe converts (rate guaranteed 24 h, customer pays the 2–4 % conversion fee, refunds go back at the original rate).
 - Stripe keeps the session's `amount_total` / `currency` in `CURRENCY`, so the webhook amount check is unchanged. The customer's amount is in `presentment_details` (`presentment_amount`, `presentment_currency`), saved on the order with the paid status (`presentment_amount`, `presentment_currency`) **for display only** (confirmation page, email, admin). Never use it for pricing, checks or reports. Missing, malformed or same-currency details are stored as null.
 - Presentment amounts use that currency's smallest unit (zero-decimal and three-decimal lists in `order-confirmation.email.ts`, storefront `formatPrice.js`, admin `format.js`).
-- The storefront shows converted prices (no `≈` sign) from its own rate API; the cart and checkout notes say they are estimates and that Stripe's page shows the final amount.
+- The storefront shows converted prices (no `≈` sign) from its own rate API; the cart and checkout notes say they are estimates and that Stripe's payment form (Currency Selector Element) shows the final amount.
 - Admin prices are entered in USD; the forms warn above $5,000 (a local amount typed by mistake).
 - Test locally with a `+location_XX` customer email (e.g. `test+location_PK@example.com`).
 - Fixed prices per currency (Stripe manual currency prices) are out of scope unless I ask: they need per-currency prices, Price objects and multi-currency reports.
@@ -363,7 +366,7 @@ Every request passes through these layers in this order. Put each concern in the
    - Never log request bodies, headers or query strings (customer data such as `?email=`, Stripe signatures, secrets). `requestLogger` logs the path only.
 2. **Guards** — https://docs.nestjs.com/guards
    Decide whether a request may continue (`canActivate`). Use for access checks. Not for transforming data.
-   - Rate limiting: `ThrottlerModule.forRoot()` is registered once in `AppModule`; `ThrottlerGuard` + `@Throttle()` are applied **per route** only (`POST /orders`, `POST /discounts/validate`, `POST /admin/login`), never globally. Limits live in `orders.constants.ts` and `admin.constants.ts`.
+   - Rate limiting: `ThrottlerModule.forRoot()` is registered once in `AppModule`; `ThrottlerGuard` + `@Throttle()` are applied **per route** only (`POST /orders`, `POST /orders/payment-session`, `POST /discounts/validate`, `POST /admin/login`), never globally. Limits live in `orders.constants.ts` and `admin.constants.ts`.
    - Admin access: `AdminGuard` is applied with `@UseGuards(AdminGuard)` on each admin controller (on the route for `GET /admin/me`), never globally, so public routes are unaffected.
 3. **Interceptors (before)** — https://docs.nestjs.com/interceptors
    Wrap the handler. Use for cross-cutting concerns such as timing/logging or consistent response mapping.
@@ -547,7 +550,7 @@ Subscribed events and how the backend handles them:
 | `charge.refunded` | A payment was refunded | Ignored for now (200) |
 | `charge.dispute.created` | Customer filed a chargeback | Ignored for now (200) |
 
-Card declines (e.g. `4000 0000 0000 0002`) are shown on the Stripe page and the customer can retry; no event changes the order until the session completes or expires.
+Card declines (e.g. `4000 0000 0000 0002`) are shown in the Payment Element on our checkout page and the customer can retry; no event changes the order until the session completes or expires.
 
 Rules:
 

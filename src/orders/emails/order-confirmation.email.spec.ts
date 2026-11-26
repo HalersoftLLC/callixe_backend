@@ -136,7 +136,9 @@ describe('buildOrderConfirmationEmail', () => {
     expect(converted.html).toContain('Paid in your currency');
     expect(converted.html).toContain('PKR');
     expect(converted.html).toContain('204,800.00');
-    expect(converted.text).toContain('Total: $726.00\nPaid in your currency: PKR');
+    expect(converted.text).toContain(
+      'Total: $726.00\nPaid in your currency: PKR',
+    );
   });
 
   it('leaves out empty optional address lines', () => {

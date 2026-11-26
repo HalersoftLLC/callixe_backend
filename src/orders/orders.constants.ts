@@ -18,4 +18,6 @@ export const ALLOWED_COUNTRIES = [
 // Rate limits (per IP, per minute) for the public write endpoints.
 export const RATE_LIMIT_TTL_MS = 60_000;
 export const CREATE_ORDER_RATE_LIMIT = 8;
+// One per checkout visit and per discount change.
+export const PAYMENT_SESSION_RATE_LIMIT = 20;
 export const VALIDATE_DISCOUNT_RATE_LIMIT = 10;

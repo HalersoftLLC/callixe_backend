@@ -51,6 +51,7 @@ describe('Orders controllers', () => {
   let discountsController: DiscountsController;
   const ordersService = {
     create: jest.fn(),
+    createPaymentSession: jest.fn(),
     findById: jest.fn(),
     findActiveDiscount: jest.fn(),
   };
@@ -68,11 +69,8 @@ describe('Orders controllers', () => {
     discountsController = moduleRef.get(DiscountsController);
   });
 
-  it('POST /orders returns orderId, orderNumber, total, and checkoutUrl only', async () => {
-    ordersService.create.mockResolvedValue({
-      order,
-      checkoutUrl: 'https://checkout.stripe.com/c/pay/cs_test_1',
-    });
+  it('POST /orders returns orderId, orderNumber, and total only', async () => {
+    ordersService.create.mockResolvedValue(order);
 
     await expect(
       ordersController.create({} as CreateOrderDto),
@@ -80,8 +78,22 @@ describe('Orders controllers', () => {
       orderId: order.id,
       orderNumber: 1001,
       total: 32670,
-      checkoutUrl: 'https://checkout.stripe.com/c/pay/cs_test_1',
     });
+  });
+
+  it('POST /orders/payment-session returns sessionId, clientSecret, and total', async () => {
+    const session = {
+      sessionId: 'cs_test_1',
+      clientSecret: 'cs_test_1_secret_abc',
+      total: 32670,
+    };
+    ordersService.createPaymentSession.mockResolvedValue(session);
+    const dto = { items: [{ slug: 'neck-pillow-2-0', quantity: 1 }] };
+
+    await expect(ordersController.createPaymentSession(dto)).resolves.toEqual(
+      session,
+    );
+    expect(ordersService.createPaymentSession).toHaveBeenCalledWith(dto);
   });
 
   it('GET /orders/:id hides phone, Stripe id, and timestamps', async () => {
@@ -124,6 +136,7 @@ describe('Orders controllers', () => {
     expect(JSON.stringify(response)).not.toContain('pi_secret_internal');
     expect(JSON.stringify(response)).not.toContain('cs_secret_internal');
     expect(JSON.stringify(response)).not.toContain('+92');
+    expect(response).not.toHaveProperty('clientSecret');
   });
 
   it('GET /orders/:id includes what the customer paid locally', async () => {

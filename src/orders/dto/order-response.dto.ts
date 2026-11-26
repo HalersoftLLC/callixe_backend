@@ -1,20 +1,27 @@
 import { DiscountCode, DiscountType } from '../entities/discount-code.entity';
 import { Order, OrderStatus } from '../entities/order.entity';
 
-// Response of POST /orders. The frontend redirects to `checkoutUrl`
-// (Stripe-hosted payment page).
+// Response of POST /orders/payment-session. The frontend mounts Stripe
+// Elements (Currency Selector + Payment Element) with `clientSecret` and
+// sends `sessionId` back as `paymentSessionId` with POST /orders.
+export class PaymentSessionResponseDto {
+  sessionId!: string;
+  clientSecret!: string;
+  total!: number;
+}
+
+// Response of POST /orders. The frontend then calls Stripe's confirm() with
+// returnUrl /order-confirmation/<orderId>.
 export class CreateOrderResponseDto {
   orderId!: string;
   orderNumber!: number;
   total!: number;
-  checkoutUrl!: string;
 
-  static fromEntity(order: Order, checkoutUrl: string): CreateOrderResponseDto {
+  static fromEntity(order: Order): CreateOrderResponseDto {
     return {
       orderId: order.id,
       orderNumber: order.orderNumber,
       total: order.total,
-      checkoutUrl,
     };
   }
 }
