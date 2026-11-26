@@ -20,7 +20,12 @@ import { OrdersService } from './orders.service';
 
 const CHECKOUT_URL = 'https://checkout.stripe.com/c/pay/cs_test_1';
 
-function makeProduct(slug: string, price: number, name = slug): Product {
+function makeProduct(
+  slug: string,
+  price: number,
+  name = slug,
+  secondUnitHalfOff = false,
+): Product {
   return {
     id: 1,
     slug,
@@ -29,6 +34,7 @@ function makeProduct(slug: string, price: number, name = slug): Product {
     compareAtPrice: null,
     description: null,
     badge: null,
+    secondUnitHalfOff,
     active: true,
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -148,9 +154,34 @@ describe('OrdersService', () => {
           name: 'Neck Pillow 2.0',
           unitPrice: 36300,
           quantity: 2,
+          dealDiscount: 0,
           lineTotal: 72600,
         }),
       ]);
+    });
+
+    it('charges every second unit at half price when the product has the deal', async () => {
+      productsService.findActiveBySlugs.mockResolvedValue([
+        makeProduct('neck-pillow-2-0', 36300, 'Neck Pillow 2.0', true),
+      ]);
+
+      const { order } = await service.create(makeDto());
+
+      expect(order).toMatchObject({ subtotal: 54450, total: 54450 });
+      expect(order.items).toEqual([
+        expect.objectContaining({
+          unitPrice: 36300,
+          quantity: 2,
+          dealDiscount: 18150,
+          lineTotal: 54450,
+        }),
+      ]);
+      expect(paymentsService.createCheckoutSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          total: 54450,
+          items: [expect.objectContaining({ dealDiscount: 18150 })],
+        }),
+      );
     });
 
     it('saves the order and its items inside one transaction', async () => {

@@ -24,6 +24,10 @@ export const COLORS = {
   white: '#ffffff',
 };
 
+// Shown next to a line with a "buy one, get one 50% off" saving, so
+// "Qty 2 × $363.00" next to a lower line total isn't confusing.
+const DEAL_LABEL = '2nd 50% off';
+
 // Email clients can't load the storefront's web fonts, so use fallbacks
 // that exist everywhere.
 export const SERIF =
@@ -69,7 +73,7 @@ function renderHtml(
               <tr>
                 <td style="padding:14px 0;border-bottom:1px solid ${COLORS.card};font-family:${SANS};font-size:14px;color:${COLORS.ink};">
                   <strong>${e(item.name)}</strong><br>
-                  <span style="color:${COLORS.muted};font-size:13px;">Qty ${item.quantity} × ${money(item.unitPrice)}</span>
+                  <span style="color:${COLORS.muted};font-size:13px;">Qty ${item.quantity} × ${money(item.unitPrice)}${item.dealDiscount > 0 ? ` · ${DEAL_LABEL}` : ''}</span>
                 </td>
                 <td align="right" style="padding:14px 0;border-bottom:1px solid ${COLORS.card};font-family:${SANS};font-size:14px;color:${COLORS.ink};white-space:nowrap;vertical-align:top;">
                   ${money(item.lineTotal)}
@@ -224,7 +228,8 @@ function renderText(order: Order, ctx: RenderContext): string {
     '',
     'ORDER SUMMARY',
     ...order.items.map(
-      (item) => `${item.name} x ${item.quantity}  ${money(item.lineTotal)}`,
+      (item) =>
+        `${item.name} x ${item.quantity}${item.dealDiscount > 0 ? ` (${DEAL_LABEL})` : ''}  ${money(item.lineTotal)}`,
     ),
     '',
     `Subtotal: ${money(order.subtotal)}`,

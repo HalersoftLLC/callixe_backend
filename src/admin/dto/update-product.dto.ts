@@ -57,5 +57,9 @@ export class UpdateProductDto {
 
   @ValidateIf(isPresent)
   @IsBoolean()
+  secondUnitHalfOff?: boolean;
+
+  @ValidateIf(isPresent)
+  @IsBoolean()
   active?: boolean;
 }

@@ -59,6 +59,11 @@ export class CreateProductDto {
   @MaxLength(PRODUCT_BADGE_MAX_LENGTH)
   badge?: string | null;
 
+  // "Buy one, get one 50% off". Defaults to false when not sent.
+  @IsOptional()
+  @IsBoolean()
+  secondUnitHalfOff?: boolean;
+
   // Defaults to true in ProductsService when not sent.
   @IsOptional()
   @IsBoolean()

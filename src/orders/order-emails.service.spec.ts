@@ -37,6 +37,7 @@ const PAID_ORDER = {
       name: 'Neck Pillow 2.0',
       unitPrice: 36300,
       quantity: 1,
+      dealDiscount: 0,
       lineTotal: 36300,
     },
   ],

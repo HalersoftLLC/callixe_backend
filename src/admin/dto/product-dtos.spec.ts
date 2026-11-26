@@ -33,6 +33,7 @@ describe('CreateProductDto', () => {
       compareAtPrice: 3000,
       description: 'Warm and soft',
       badge: 'New',
+      secondUnitHalfOff: true,
       active: false,
     });
     expect(errors).toHaveLength(0);
@@ -69,6 +70,10 @@ describe('CreateProductDto', () => {
     ],
     ['a 51-character badge', { ...validCreate, badge: 'a'.repeat(51) }],
     ['active sent as text', { ...validCreate, active: 'yes' }],
+    [
+      'secondUnitHalfOff sent as text',
+      { ...validCreate, secondUnitHalfOff: 'true' },
+    ],
     ['an unknown field', { ...validCreate, id: 5 }],
   ])('rejects %s', (_case, body) => {
     expect(validate(CreateProductDto, body).errors.length).toBeGreaterThan(0);
@@ -98,6 +103,7 @@ describe('UpdateProductDto', () => {
     ['null name', { name: null }],
     ['null price', { price: null }],
     ['null active', { active: null }],
+    ['null secondUnitHalfOff', { secondUnitHalfOff: null }],
     ['a blank name', { name: '  ' }],
     ['a decimal price', { price: 1.5 }],
     ['an unknown field', { stock: 5 }],

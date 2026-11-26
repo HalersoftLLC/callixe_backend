@@ -33,6 +33,7 @@ function makeProduct(overrides: Partial<Product> = {}): Product {
     compareAtPrice: 55900,
     description: null,
     badge: null,
+    secondUnitHalfOff: false,
     active: true,
     createdAt: new Date('2026-01-01'),
     updatedAt: new Date('2026-01-01'),
@@ -336,6 +337,7 @@ describe('ProductsService', () => {
         compareAtPrice: null,
         description: null,
         badge: null,
+        secondUnitHalfOff: false,
         active: true,
       });
       expect(result).toMatchObject({ slug: 'heat-wrap', active: true });
@@ -350,6 +352,7 @@ describe('ProductsService', () => {
         compareAtPrice: 3000,
         description: 'Warm',
         badge: 'New',
+        secondUnitHalfOff: true,
         active: false,
       });
 
@@ -358,6 +361,7 @@ describe('ProductsService', () => {
           compareAtPrice: 3000,
           description: 'Warm',
           badge: 'New',
+          secondUnitHalfOff: true,
           active: false,
         }),
       );
@@ -444,6 +448,16 @@ describe('ProductsService', () => {
         active: false,
       });
       expect(result.active).toBe(false);
+    });
+
+    it('turns "buy one, get one 50% off" on', async () => {
+      repository.findOneBy.mockResolvedValue(makeProduct());
+
+      await service.update('neck-pillow-2-0', { secondUnitHalfOff: true });
+
+      expect(repository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ secondUnitHalfOff: true, price: 36300 }),
+      );
     });
 
     it('checks the price rule against the saved compareAtPrice', async () => {

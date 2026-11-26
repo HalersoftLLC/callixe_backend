@@ -50,6 +50,7 @@ export interface ProductCreateInput {
   compareAtPrice?: number | null;
   description?: string | null;
   badge?: string | null;
+  secondUnitHalfOff?: boolean;
   active?: boolean;
 }
 
@@ -64,6 +65,7 @@ export interface AdminProductView {
   compareAtPrice: number | null;
   description: string | null;
   badge: string | null;
+  secondUnitHalfOff: boolean;
   active: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -199,6 +201,7 @@ export class ProductsService {
       compareAtPrice: input.compareAtPrice ?? null,
       description: input.description ?? null,
       badge: input.badge ?? null,
+      secondUnitHalfOff: input.secondUnitHalfOff ?? false,
       active: input.active ?? true,
     });
     assertCompareAtPriceAbovePrice(product);
@@ -236,6 +239,9 @@ export class ProductsService {
       product.description = input.description;
     }
     if (input.badge !== undefined) product.badge = input.badge;
+    if (input.secondUnitHalfOff !== undefined) {
+      product.secondUnitHalfOff = input.secondUnitHalfOff;
+    }
     if (input.active !== undefined) product.active = input.active;
 
     // Checked after merging, so changing only one of the two prices is
@@ -267,6 +273,7 @@ export class ProductsService {
       compareAtPrice: product.compareAtPrice,
       description: product.description,
       badge: product.badge,
+      secondUnitHalfOff: product.secondUnitHalfOff,
       active: product.active,
       createdAt: product.createdAt,
       updatedAt: product.updatedAt,

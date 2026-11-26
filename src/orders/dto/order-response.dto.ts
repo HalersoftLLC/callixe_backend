@@ -24,6 +24,8 @@ export class OrderItemResponseDto {
   name!: string;
   unitPrice!: number;
   quantity!: number;
+  // "Buy one, get one 50% off" saving, already subtracted from lineTotal.
+  dealDiscount!: number;
   lineTotal!: number;
 }
 
@@ -74,6 +76,7 @@ export class OrderResponseDto {
         name: item.name,
         unitPrice: item.unitPrice,
         quantity: item.quantity,
+        dealDiscount: item.dealDiscount,
         lineTotal: item.lineTotal,
       })),
       subtotal: order.subtotal,

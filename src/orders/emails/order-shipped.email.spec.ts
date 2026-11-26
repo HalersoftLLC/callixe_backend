@@ -35,6 +35,7 @@ function makeOrder(overrides: Partial<Order> = {}): Order {
         name: 'Neck Pillow 2.0',
         unitPrice: 36300,
         quantity: 2,
+        dealDiscount: 0,
         lineTotal: 72600,
       } as OrderItem,
     ],

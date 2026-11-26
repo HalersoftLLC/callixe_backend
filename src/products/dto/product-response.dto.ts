@@ -12,6 +12,9 @@ export class ProductResponseDto {
   compareAtPrice!: number | null;
   description!: string | null;
   badge!: string | null;
+  // "Buy one, get one 50% off": the storefront shows the 2-unit price and
+  // prices the cart the same way the backend charges (orders/pricing.ts).
+  secondUnitHalfOff!: boolean;
   images!: PublicProductImage[];
 
   static fromEntity(
@@ -25,6 +28,7 @@ export class ProductResponseDto {
       compareAtPrice: product.compareAtPrice,
       description: product.description,
       badge: product.badge,
+      secondUnitHalfOff: product.secondUnitHalfOff,
       images,
     };
   }

@@ -1,5 +1,6 @@
 import { DiscountType } from './entities/discount-code.entity';
 import {
+  calculateDealDiscount,
   calculateDiscountAmount,
   calculateLineTotal,
   calculateSubtotal,
@@ -7,9 +8,34 @@ import {
 } from './pricing';
 
 describe('pricing', () => {
+  describe('calculateDealDiscount', () => {
+    it('is 0 when the product has no deal', () => {
+      expect(calculateDealDiscount(36300, 2, false)).toBe(0);
+    });
+
+    it('is 0 for a single unit', () => {
+      expect(calculateDealDiscount(36300, 1, true)).toBe(0);
+    });
+
+    it('takes half off every second unit', () => {
+      expect(calculateDealDiscount(36300, 2, true)).toBe(18150);
+      expect(calculateDealDiscount(36300, 3, true)).toBe(18150);
+      expect(calculateDealDiscount(36300, 4, true)).toBe(36300);
+    });
+
+    it('rounds half an odd price down to whole cents', () => {
+      expect(calculateDealDiscount(36301, 2, true)).toBe(18150);
+    });
+  });
+
   describe('calculateLineTotal', () => {
     it('multiplies unit price by quantity', () => {
       expect(calculateLineTotal(36300, 2)).toBe(72600);
+    });
+
+    it('subtracts the deal discount', () => {
+      // 2 for 1.5x the price
+      expect(calculateLineTotal(36300, 2, 18150)).toBe(54450);
     });
   });
 
@@ -21,6 +47,15 @@ describe('pricing', () => {
           { unitPrice: 13800, quantity: 1 },
         ]),
       ).toBe(86400);
+    });
+
+    it('uses the line totals after the deal', () => {
+      expect(
+        calculateSubtotal([
+          { unitPrice: 36300, quantity: 2, dealDiscount: 18150 },
+          { unitPrice: 13800, quantity: 1 },
+        ]),
+      ).toBe(68250);
     });
 
     it('is 0 for no lines', () => {
@@ -90,6 +125,21 @@ describe('pricing', () => {
         discountAmount: 3630,
         shipping: 0,
         total: 32670,
+      });
+    });
+
+    it('applies a discount code after the deal', () => {
+      expect(
+        calculateTotals(
+          [{ unitPrice: 36300, quantity: 2, dealDiscount: 18150 }],
+          { type: DiscountType.Percent, value: 10 },
+          0,
+        ),
+      ).toEqual({
+        subtotal: 54450,
+        discountAmount: 5445,
+        shipping: 0,
+        total: 49005,
       });
     });
 

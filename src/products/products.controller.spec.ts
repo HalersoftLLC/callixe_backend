@@ -12,6 +12,7 @@ const product: Product = {
   compareAtPrice: 55900,
   description: 'Memory foam support for travel.',
   badge: 'Bestseller',
+  secondUnitHalfOff: true,
   active: true,
   createdAt: new Date('2026-01-01'),
   updatedAt: new Date('2026-01-01'),
@@ -32,6 +33,7 @@ const publicShape = {
   compareAtPrice: 55900,
   description: 'Memory foam support for travel.',
   badge: 'Bestseller',
+  secondUnitHalfOff: true,
   images: publicImages,
 };
 

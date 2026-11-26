@@ -5,6 +5,8 @@ import { DiscountType } from './entities/discount-code.entity';
 export interface PricedLine {
   unitPrice: number;
   quantity: number;
+  // From calculateDealDiscount; 0 or missing = no deal on this line.
+  dealDiscount?: number;
 }
 
 export interface Discount {
@@ -19,13 +21,31 @@ export interface OrderTotals {
   total: number;
 }
 
-export function calculateLineTotal(unitPrice: number, quantity: number) {
-  return unitPrice * quantity;
+// "Buy one, get one 50% off": every second unit of the same product costs
+// half. Half the price is rounded down to whole cents, so 2 units of 36301
+// take 18150 off. Must match the storefront's cart (CartProvider).
+export function calculateDealDiscount(
+  unitPrice: number,
+  quantity: number,
+  secondUnitHalfOff: boolean,
+): number {
+  if (!secondUnitHalfOff) return 0;
+  return Math.floor(quantity / 2) * Math.floor(unitPrice / 2);
+}
+
+export function calculateLineTotal(
+  unitPrice: number,
+  quantity: number,
+  dealDiscount = 0,
+) {
+  return unitPrice * quantity - dealDiscount;
 }
 
 export function calculateSubtotal(lines: PricedLine[]): number {
   return lines.reduce(
-    (sum, line) => sum + calculateLineTotal(line.unitPrice, line.quantity),
+    (sum, line) =>
+      sum +
+      calculateLineTotal(line.unitPrice, line.quantity, line.dealDiscount),
     0,
   );
 }

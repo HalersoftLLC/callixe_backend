@@ -44,6 +44,7 @@ function makeOrder(overrides: Partial<Order> = {}): Order {
         name: 'Neck Pillow 2.0',
         unitPrice: 36300,
         quantity: 2,
+        dealDiscount: 0,
         lineTotal: 72600,
       } as OrderItem,
     ],
@@ -74,6 +75,33 @@ describe('buildOrderConfirmationEmail', () => {
     }
     expect(html).toContain('Qty 2 × $363.00');
     expect(html).toContain('Free');
+  });
+
+  it('marks a "buy one, get one 50% off" line', () => {
+    const plain = buildOrderConfirmationEmail(makeOrder(), OPTIONS);
+    expect(plain.html).not.toContain('2nd 50% off');
+
+    const deal = buildOrderConfirmationEmail(
+      makeOrder({
+        items: [
+          {
+            id: 1,
+            slug: 'neck-pillow-2-0',
+            name: 'Neck Pillow 2.0',
+            unitPrice: 36300,
+            quantity: 2,
+            dealDiscount: 18150,
+            lineTotal: 54450,
+          } as OrderItem,
+        ],
+        subtotal: 54450,
+        total: 54450,
+      }),
+      OPTIONS,
+    );
+    expect(deal.html).toContain('Qty 2 × $363.00 · 2nd 50% off');
+    expect(deal.html).toContain('$544.50');
+    expect(deal.text).toContain('Neck Pillow 2.0 x 2 (2nd 50% off)  $544.50');
   });
 
   it('shows the discount line only when there is a discount', () => {

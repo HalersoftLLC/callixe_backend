@@ -46,6 +46,12 @@ export class Product {
   @Column({ type: 'varchar', length: 50, nullable: true })
   badge!: string | null;
 
+  // "Buy one, get one 50% off": every second unit costs half
+  // (orders/pricing.ts calculateDealDiscount). Set by migration
+  // (EnableNeckPillowDeal); the admin panel has no switch for it.
+  @Column({ name: 'second_unit_half_off', type: 'boolean', default: false })
+  secondUnitHalfOff!: boolean;
+
   // Inactive products are hidden from the catalog and cannot be ordered.
   @Column({ type: 'boolean', default: true })
   active!: boolean;

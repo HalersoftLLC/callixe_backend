@@ -101,6 +101,7 @@ export interface AdminOrderDetail {
     name: string;
     unitPrice: number;
     quantity: number;
+    dealDiscount: number;
     lineTotal: number;
   }[];
   subtotal: number;
@@ -562,6 +563,7 @@ function toOrderDetail(order: Order): AdminOrderDetail {
       name: item.name,
       unitPrice: item.unitPrice,
       quantity: item.quantity,
+      dealDiscount: item.dealDiscount,
       lineTotal: item.lineTotal,
     })),
     subtotal: order.subtotal,

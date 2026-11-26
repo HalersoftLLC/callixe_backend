@@ -22,6 +22,7 @@ function makeProduct(overrides: Partial<Product> = {}): Product {
     compareAtPrice: 55900,
     description: null,
     badge: 'Bestseller',
+    secondUnitHalfOff: false,
     active: true,
     createdAt: UPDATED_AT,
     updatedAt: UPDATED_AT,

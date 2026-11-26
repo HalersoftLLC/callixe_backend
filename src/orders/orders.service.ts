@@ -17,7 +17,11 @@ import { OrderItem } from './entities/order-item.entity';
 import { Order, OrderStatus } from './entities/order.entity';
 import { OrderEmailsService } from './order-emails.service';
 import { STANDARD_SHIPPING_PRICE } from './orders.constants';
-import { calculateLineTotal, calculateTotals } from './pricing';
+import {
+  calculateDealDiscount,
+  calculateLineTotal,
+  calculateTotals,
+} from './pricing';
 
 export interface ShipOrderResult {
   shippedAt: Date;
@@ -192,12 +196,22 @@ export class OrdersService {
 
     const lines = dto.items.map((item) => {
       const product = productsBySlug.get(item.slug)!;
+      const dealDiscount = calculateDealDiscount(
+        product.price,
+        item.quantity,
+        product.secondUnitHalfOff,
+      );
       return {
         slug: product.slug,
         name: product.name,
         unitPrice: product.price,
         quantity: item.quantity,
-        lineTotal: calculateLineTotal(product.price, item.quantity),
+        dealDiscount,
+        lineTotal: calculateLineTotal(
+          product.price,
+          item.quantity,
+          dealDiscount,
+        ),
       };
     });
     const totals = calculateTotals(lines, discount, STANDARD_SHIPPING_PRICE);

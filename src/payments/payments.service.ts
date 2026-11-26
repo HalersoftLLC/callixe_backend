@@ -24,7 +24,13 @@ export interface CheckoutOrder {
   total: number;
   discountCode: string | null;
   discountAmount: number;
-  items: { name: string; unitPrice: number; quantity: number }[];
+  items: {
+    name: string;
+    unitPrice: number;
+    quantity: number;
+    // "Buy one, get one 50% off" saving on this line; 0 when none.
+    dealDiscount: number;
+  }[];
 }
 
 export interface CheckoutSessionResult {
@@ -74,14 +80,9 @@ export class PaymentsService {
 
     const params: Stripe.Checkout.SessionCreateParams = {
       mode: 'payment',
-      line_items: order.items.map((item) => ({
-        price_data: {
-          currency: order.currency,
-          unit_amount: item.unitPrice,
-          product_data: { name: item.name },
-        },
-        quantity: item.quantity,
-      })),
+      line_items: order.items.flatMap((item) =>
+        toLineItems(item, order.currency),
+      ),
       customer_email: order.email,
       client_reference_id: order.id,
       metadata: { orderId: order.id },
@@ -178,6 +179,36 @@ export class PaymentsService {
       presentment: toPresentment(session),
     };
   }
+}
+
+// One Checkout line per order item, or two when "buy one, get one 50% off"
+// applies: the full-price units, then every second unit at its reduced
+// price. Their sum is exactly the item's line total, so amount_total still
+// equals the order total (checked after the session is created).
+function toLineItems(
+  item: CheckoutOrder['items'][number],
+  currency: string,
+): Stripe.Checkout.SessionCreateParams.LineItem[] {
+  const line = (name: string, unitAmount: number, quantity: number) => ({
+    price_data: {
+      currency,
+      unit_amount: unitAmount,
+      product_data: { name },
+    },
+    quantity,
+  });
+
+  const halfPriceUnits =
+    item.dealDiscount > 0 ? Math.floor(item.quantity / 2) : 0;
+  if (halfPriceUnits === 0) {
+    return [line(item.name, item.unitPrice, item.quantity)];
+  }
+  // dealDiscount = halfPriceUnits * floor(unitPrice / 2): divides exactly.
+  const reducedPrice = item.unitPrice - item.dealDiscount / halfPriceUnits;
+  return [
+    line(item.name, item.unitPrice, item.quantity - halfPriceUnits),
+    line(`${item.name} (2nd at 50% off)`, reducedPrice, halfPriceUnits),
+  ];
 }
 
 // Only a real conversion is kept: missing, malformed or same-currency

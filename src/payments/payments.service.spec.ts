@@ -23,7 +23,14 @@ function makeOrder(overrides: Partial<CheckoutOrder> = {}): CheckoutOrder {
     total: 72600,
     discountCode: null,
     discountAmount: 0,
-    items: [{ name: 'Neck Pillow 2.0', unitPrice: 36300, quantity: 2 }],
+    items: [
+      {
+        name: 'Neck Pillow 2.0',
+        unitPrice: 36300,
+        quantity: 2,
+        dealDiscount: 0,
+      },
+    ],
     ...overrides,
   };
 }
@@ -122,6 +129,49 @@ describe('PaymentsService', () => {
         expires_at: NOW_MS / 1000 + 1800,
       });
       expect(params).not.toHaveProperty('discounts');
+    });
+
+    it('sends every second unit of a deal as a separate half-price line', async () => {
+      stripe.checkout.sessions.create.mockResolvedValue({
+        id: 'cs_test_1',
+        url: 'https://checkout.stripe.com/c/pay/cs_test_1',
+        amount_total: 90750,
+      });
+
+      // 3 units: 2 at full price + 1 at half price = 36300 * 2 + 18150
+      await service.createCheckoutSession(
+        makeOrder({
+          total: 90750,
+          items: [
+            {
+              name: 'Neck Pillow 2.0',
+              unitPrice: 36300,
+              quantity: 3,
+              dealDiscount: 18150,
+            },
+          ],
+        }),
+      );
+
+      const params = stripe.checkout.sessions.create.mock.calls[0][0];
+      expect(params.line_items).toEqual([
+        {
+          price_data: {
+            currency: 'usd',
+            unit_amount: 36300,
+            product_data: { name: 'Neck Pillow 2.0' },
+          },
+          quantity: 2,
+        },
+        {
+          price_data: {
+            currency: 'usd',
+            unit_amount: 18150,
+            product_data: { name: 'Neck Pillow 2.0 (2nd at 50% off)' },
+          },
+          quantity: 1,
+        },
+      ]);
     });
 
     it('applies the discount as a single-use coupon for the exact amount', async () => {

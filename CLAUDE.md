@@ -10,6 +10,8 @@ This file provides mandatory development instructions for Claude Code when worki
 
 **Admin app:** `d:\react\callixe-admin` (React 19 + Vite, JavaScript only, port 5174). Plan and phase status: [docs/admin-plan.md](docs/admin-plan.md).
 
+**Production server, URLs and deploy steps:** [docs/server.md](docs/server.md) (Droplet, PM2 app, Hostinger folders, Stripe destinations, troubleshooting).
+
 This backend serves a simple guest checkout. The customer flow is:
 
 1. Browse products and add them to the cart (cart lives in the browser's localStorage).
@@ -158,7 +160,7 @@ The frontend depends on these endpoints. Do not change their shape without telli
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/products` | List active products: `{ slug, name, price, compareAtPrice, description, badge, images: [{ url, isMain }] }` |
+| GET | `/products` | List active products: `{ slug, name, price, compareAtPrice, description, badge, secondUnitHalfOff, images: [{ url, isMain }] }` |
 | GET | `/products/:slug` | One active product (same shape), 404 if not found |
 | POST | `/discounts/validate` | Body `{ code }` → 200 `{ code, type, value }` or 400. 10/min per IP |
 | POST | `/orders` | Create pending order, returns `{ orderId, orderNumber, total, checkoutUrl }`; the frontend redirects to `checkoutUrl` (Stripe-hosted page). 8/min per IP |
@@ -176,7 +178,7 @@ Admin endpoints (used only by the admin app). Every route except login requires 
 | GET | `/admin/products` | `?search=&active=&sort=&page=&limit=` → `{ items, page, limit, total }`, includes inactive |
 | GET | `/admin/products/:slug` | One product, including inactive; 404 if missing |
 | POST | `/admin/products` | Create; 409 if the slug exists |
-| PATCH | `/admin/products/:slug` | Update any field except the slug; `null` clears `compareAtPrice`/`description`/`badge` |
+| PATCH | `/admin/products/:slug` | Update any field except the slug (including `secondUnitHalfOff: boolean`); `null` clears `compareAtPrice`/`description`/`badge` |
 | POST | `/admin/products/:slug/images` | Multipart `file` (+ optional `isMain`) → `{ id, url, isMain, position }`. JPEG/PNG/WebP by file bytes, ≤ 5 MB (413), ≤ 10 per product |
 | PATCH | `/admin/products/:slug/images/:imageId` | `{ isMain?: true, position? }` → all images in their new order |
 | PUT | `/admin/products/:slug/images/:imageId/file` | Replace the file of the same image |
@@ -233,6 +235,7 @@ These rules are mandatory. Getting them wrong costs real money.
 - **The server always calculates prices and totals** from the database. Never trust a price, subtotal, discount amount, or total sent by the client.
 - Reject unknown slugs, quantities below 1 or above a sensible maximum, and empty carts with a 400.
 - Discount codes are case-insensitive. A discount can never exceed the subtotal.
+- **Buy one, get one 50% off** (`products.second_unit_half_off`; no admin switch: the `EnableNeckPillowDeal` migration turns it on for `neck-pillow-2-0`): every second unit of that product costs half. `calculateDealDiscount` = `floor(qty / 2) × floor(price / 2)`; the line total is `price × qty − dealDiscount` (2 units = 1.5× price). The storefront cart uses the same formula for display. Discount codes apply to the subtotal after the deal. In Stripe the line is split into the full-price units and a `"<name> (2nd at 50% off)"` line, so `amount_total` still equals the order total.
 - Shipping is a single free "Standard Shipping" option (price 0) until I say otherwise.
 - Keep pricing logic in pure functions (`orders/pricing.ts`) so it is easy to unit test.
 
@@ -286,13 +289,13 @@ Docs: https://docs.stripe.com/payments/currencies/localize-prices/adaptive-prici
 
 Keep it minimal. The backend stores only what checkout and payment need.
 
-- **Product:** id, slug (unique, never changes after creation), name, price, compareAtPrice (nullable, must be greater than price), description (nullable), badge (nullable), active, createdAt, updatedAt.
+- **Product:** id, slug (unique, never changes after creation), name, price, compareAtPrice (nullable, must be greater than price), description (nullable), badge (nullable), secondUnitHalfOff (boolean, default false: "buy one, get one 50% off"), active, createdAt, updatedAt.
 - **ProductImage:** id, productId (FK, cascade), storageKey (unique; never returned), contentType (jpeg/png/webp), isMain (one per product), position, createdAt. No URL column: URLs are `STORAGE_PUBLIC_URL + '/' + storageKey`.
 - **ShopHero:** exactly one row (`id = 1`, `CHK_shop_hero_single_row`): eyebrow, title, imageStorageKey + imageContentType (nullable, set and cleared together; never returned), imageAlt (nullable, falls back to title), updatedAt. Seeded by the `CreateShopHero` migration with the current storefront text and no image.
 - **FeaturedCard:** exactly two rows (`slot` 1 and 2, `CHK_featured_cards_slot`): productId (nullable FK to products, `ON DELETE SET NULL`, unique so one product can't fill both cards). Both cards always show: the API can't set it to null; it is only null if the product was removed from the database, until the admin picks another one, imagePosition (`left` | `right`), promo (nullable, ≤ 30), updatedAt. A card only chooses a product and how to show it; name, prices, description, badge and image always come from that product. Seeded by the `CreateFeaturedCards` migration with the two cards the Shop page showed before.
 - **DiscountCode:** code (unique, uppercase), type (`percent` | `fixed`), value, active.
 - **Order:** id (UUID, used in URLs), orderNumber (short, from 1001, for display and emails), email, delivery fields (firstName, lastName, address, apartment, city, postalCode, country, phone), subtotal, discountCode, discountAmount, shipping, total, currency, presentmentAmount + presentmentCurrency (nullable, set together by the webhook with `paid`; what the customer paid in their own currency, display only, `CHK_orders_presentment`), status (`pending` | `paid` | `failed`), stripeCheckoutSessionId (unique, nullable; set when the Checkout Session is created), stripePaymentIntentId (unique, nullable; set when the order is paid), shippedAt (nullable; set once by the admin's Mark as shipped; null = unfulfilled), shippingEmailSentAt (nullable; last successful "on its way" email), createdAt, updatedAt. A database check enforces `total = subtotal - discount_amount + shipping`.
-- **OrderItem:** orderId, slug, name, unitPrice, quantity, lineTotal (copied at order time so later price changes do not alter past orders). No image column.
+- **OrderItem:** orderId, slug, name, unitPrice, quantity, dealDiscount (what "buy one, get one 50% off" took off; 0 if none), lineTotal (copied at order time so later price changes do not alter past orders; `CHK_order_items_line_total`: `line_total = unit_price × quantity − deal_discount`). No image column.
 
 **Display content is split.** The backend owns what the admin manages: `description`, `badge`, product images (`product_images` table), the Shop page hero (`shop_hero` table) and the two featured product cards with their `promo` and image side (`featured_cards` table). The frontend keeps the rest in `src/data/dummyData.js` (and uses its old `promo`/`featured`/`imagePosition` values only as a fallback when the backend can't be reached), matched by `slug`, and falls back to its own `image`/`alt`/`description`/`badge` while the backend value is null. Do not add other display fields to backend tables without my permission. The frontend fetches `GET /products` for name and prices and merges them by slug, so the price shown always equals the price charged.
 
